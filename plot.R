@@ -2,6 +2,7 @@ library(tidyverse, quietly=TRUE)
 
 args <- commandArgs(trailingOnly=TRUE)
 rlen <- as.numeric(args[1])
+tics <- as.numeric(args[2])
 
 # data <- read_csv("hits-seq.csv")
 # data <- read_csv("hits-mut.csv")
@@ -23,19 +24,14 @@ intercepts <- data |>
   mutate(y=c) |>
   mutate(x=0)
 
-intercepts |>
-  summarize(cmean=mean(c), csd=sd(c))
-
-intercepts
-
-tic <- 2000
-
-xbreaks <- seq(0, rlen, by=tic)
-ybreaks <- c(rev(-seq(0, rlen, by=tic)), seq(tic, rlen, by=tic))
+xbreaks <- seq(0, rlen, by=tics)
+ybreaks <- seq(0, rlen, by=tics)
+# ybreaks <- c(rev(-seq(0, rlen, by=tics)), seq(tics, rlen, by=tics))
 
 ggplot(matches, aes(x=x, y=y)) +
   coord_fixed(xlim=c(0, rlen),
-              ylim=c(-rlen, rlen),
+              # ylim=c(-rlen, rlen),
+              ylim=c(0, rlen),
               ratio=1) +
   scale_x_continuous(breaks=xbreaks) +
   scale_y_continuous(breaks=ybreaks) +
@@ -45,14 +41,14 @@ ggplot(matches, aes(x=x, y=y)) +
   geom_segment(x=0,    y=0,    xend=rlen, yend=0, color="#666666") +
   geom_segment(x=0,    y=rlen, xend=rlen, yend=rlen, color="#666666") +
   geom_segment(x=0,    y=0,    xend=rlen, yend=rlen, color="#AA6666", linetype="dashed") +
-  geom_jitter(color="#00000066", shape='o', data=intercepts) +
+  # geom_jitter(color="#00000066", shape='o', data=intercepts) +
   labs(
-    title="Mimimizer matches",
+    title="Minimizer matches",
     x="Location in Read 1",
     y="Location in Read 2",
   )
 
-ggsave("matches.png", width=6, height=8, unit="in", dpi=600)
+ggsave("matches.png", width=7, height=7, unit="in", dpi=600)
 
 
 ggplot(intercepts, aes(x=y)) +

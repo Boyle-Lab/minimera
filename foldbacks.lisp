@@ -7,6 +7,26 @@
 (in-package :foldbacks)
 
 ;;;; Data Generation ----------------------------------------------------------
+(defparameter *foldback-position-epsilon* 50
+  "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster.")
+
+(defparameter *intercept-epsilon* 30
+  "Epsilon (in y-intercept space) used to cluster colinear points during the initial clustering step.")
+
+(defparameter *gap-epsilon* 300
+  "Maximum width (in y-intercept space) of an allowable gap in a cluster.  Gaps wider than this will result in splitting the cluster.")
+
+(defparameter *minimum-cluster-length* 40
+  "Minimum number of allowable points in a cluster.  Clusters with fewer than this many hits will be removed.")
+
+(defparameter *minimum-foldback-length-absolute* 50
+  "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded.")
+
+(defparameter *minimum-foldback-length-relative* 0.05
+  "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded.")
+
+
+;;;; Data Generation ----------------------------------------------------------
 (defparameter *foldback-chance* 0.2)
 
 (defun random-dna (n)
@@ -72,7 +92,9 @@
 
 
 ;;;; Longest Increasing Subsequence -------------------------------------------
+
 ;;; Based on Rosetta code, cleaned up and extended to allow :key function:
+;;;
 ;;; https://rosettacode.org/wiki/Longest_increasing_subsequence#Common_Lisp:_Using_the_Patience_Sort_approach
 
 (defun patience-insert (item piles &key key)
@@ -89,13 +111,23 @@
               (return))
         :finally (vector-push-extend (list (cons item top)) piles)))
 
-(defun longest-increasing-subsequence (sequence &key (key #'identity))
+(defun longest-increasing-subsequence (sequence &key (key #'identity) (result-type 'list))
+  "Return the longest increasing subsequence of elements from `sequence`.
+
+  Elements will be compared with `<`.  `key` will be called on each first.
+
+  The result will be a sequence of type `result-type`.
+
+  "
   (let ((piles (make-array 256 :adjustable t :fill-pointer 0)))
     (map nil (lambda (item) (patience-insert item piles :key key)) sequence)
-    (nreverse (car (aref piles (1- (length piles)))))))
+    (nreverse (coerce (car (aref piles (1- (length piles)))) result-type))))
 
 
-;;;; Reference Implementation -------------------------------------------------
+;;;; Hashing ------------------------------------------------------------------
+
+;;; https://naml.us/post/inverse-of-a-hash-function/
+
 (deftype u64 ()
   `(integer 0 ,(1- (expt 2 64))))
 
@@ -110,7 +142,7 @@
   (logand (ash x (- bits))
           (1- (ash 1 64))))
 
-(defun invertible-hash (n)
+(defun hash64 (n)
   (etypecase n
     (u64
       (_ n
@@ -124,10 +156,61 @@
         (wrap64 (logxor _ (shr _ 28)))
         (wrap64 (+ _ (shl _ 31)))))))
 
-;; (format t "~16,'0X" (invertible-hash #x7ffffbffffdfffff))
+(defun ihash64 (n)
+  ;;; https://naml.us/post/inverse-of-a-hash-function/
+  (etypecase n
+    (u64
+      (let* ((key n)
 
+             ;;   // Invert key = key + (key << 31)
+             ;;   tmp = key - (key <<31);
+             ;;   key = key - (tmp <<31);
+             (tmp (wrap64 (- key (shl key 31))))
+             (key (wrap64 (- key (shl tmp 31))))
 
-(defun minhash (string &key (start 0) (end (length string)))
+             ;;   // Invert key = key ^ (key >> 28)
+             ;;   tmp = key ^ key >>28;
+             ;;   key = key ^ tmp >>28;
+             (tmp (wrap64 (logxor key (shr key 28))))
+             (key (wrap64 (logxor key (shr tmp 28))))
+
+             ;;   // Invert key *= 21
+             ;;   key *= 14933078535860113213u;
+             (key (wrap64 (* key 14933078535860113213)))
+
+             ;;   // Invert key = key ^ (key >> 14)
+             ;;   tmp = key ^ key >> 14;
+             ;;   tmp = key ^ tmp >> 14;
+             ;;   tmp = key ^ tmp >> 14;
+             ;;   key = key ^ tmp >> 14;
+             (tmp (wrap64 (logxor key (shr key 14))))
+             (tmp (wrap64 (logxor key (shr tmp 14))))
+             (tmp (wrap64 (logxor key (shr tmp 14))))
+             (key (wrap64 (logxor key (shr tmp 14))))
+
+             ;;   // Invert key *= 265
+             ;;   key *= 15244667743933553977u;
+             (key (wrap64 (* key 15244667743933553977)))
+
+             ;;   // Invert key = key ^ (key >> 24)
+             ;;   tmp = key ^ key >> 24;
+             ;;   key = key ^ tmp >> 24;
+             (tmp (wrap64 (logxor key (shr key 24))))
+             (key (wrap64 (logxor key (shr tmp 24))))
+
+             ;;   // Invert key = (~key) + (key << 21)
+             ;;   tmp = ~key;
+             ;;   tmp = ~( key -( tmp <<21));
+             ;;   tmp = ~( key -( tmp <<21));
+             ;;   key = ~( key -( tmp <<21));
+             (tmp (wrap64 (lognot key)))
+             (tmp (wrap64 (lognot (- key (shl tmp 21)))))
+             (tmp (wrap64 (lognot (- key (shl tmp 21)))))
+             (key (wrap64 (lognot (- key (shl tmp 21))))))
+        key))))
+
+(defun phihash (string &key (start 0) (end (length string)))
+  "Return the φ-hash of the subsequence of `string` bounded by `start` and `end`."
   (iterate
     (with hash = 0)
     (for ch :in-string string :from start :below end)
@@ -138,10 +221,12 @@
                              (#\C #b01)
                              (#\T #b10)
                              (#\G #b11)))))
-    (returning (invertible-hash hash))))
+    (returning (hash64 hash))))
 
 
+;;;; FASTQ --------------------------------------------------------------------
 (defun do-fastq (function stream)
+  "Read a FASTQ from `stream` and call `(function id sequence)` on each entry."
   (iterate
     (until (eql :eof (peek-char nil stream nil :eof)))
     (assert (char= #\> (read-char stream)))
@@ -152,7 +237,10 @@
     (peek-char #\newline stream) (read-char stream) ; quality scores
     (funcall function id seq)))
 
+
+;;;; Minimizers ---------------------------------------------------------------
 (defun reverse-complement (seq)
+  "Return a fresh string of the reverse complement of `seq`."
   (nreverse (map 'string (lambda (ch)
                            (ecase ch
                              (#\A #\T)
@@ -161,29 +249,33 @@
                              (#\T #\A)))
                  seq)))
 
-(define-sorting-predicate string-minimizer-<
-  (#'string< :key #'car)
-  (#'< :key #'cdr))
+(defun minimizer (k window window-start)
+  "Return the `k`-minimizer of `window`.
 
-(defun minimizers (k w seq)
+  Will return a cons of the (hashed) minimizer and its position in the sequence.
+
+  `window-start` must the the start position of the window in the overall
+  sequence, and is used to compute the position.
+
+  "
+  (alexandria:extremum
+    (iterate
+      (for (kmer ks ke) :window k :on window)
+      (collect (cons (phihash kmer) (+ window-start ks))))
+    #'< :key #'car))
+
+(defun minimizers (k w sequence)
+  "Return a list of the (`k`, `w`, φ)-mimimizer sketch of `sequence`."
   (iterate
     (with prev)
-    (for (window ws we) :window w :on seq)
-    (for minimizer = (alexandria:extremum
-                       (iterate
-                         (for (kmer ks ke) :window k :on window)
-                         (collect
-                           (cons (minhash kmer) (+ ws ks))
-                           ;; (cons kmer (+ ws ks))
-
-                           ))
-                       #'< :key #'car
-                       ;; #'string-minimizer-<
-                       ))
+    (for (window ws we) :window w :on sequence)
+    (for minimizer = (minimizer k window ws))
     (unless (and prev (= (cdr prev) (cdr minimizer)))
       (collect minimizer)
       (setf prev minimizer))))
 
+
+;;;; Minimizer Hits/Matches ---------------------------------------------------
 (defstruct (hit (:constructor make-hit (c l1 l2)))
   (c nil :type fixnum)
   (l1 nil :type fixnum)
@@ -199,6 +291,11 @@
   (#'< :key #'hit-l1))
 
 (defun hits (ms1 ms2)
+  "Return a vector of matching minimizer hits from sketches `ms1` and `ms2`.
+
+  The vector will be sorted in parameter-space-intercept-order.
+
+  "
   (let ((index-1 (group-by #'car ms1 :test #'equal :map #'cdr))
         (index-2 (group-by #'car ms2 :test #'equal :map #'cdr)))
     (sort (coerce (iterate
@@ -210,63 +307,113 @@
                   'vector)
           #'hit<)))
 
-(define-sorting-predicate cluster-hit-<
-  (#'< :key #'hit-l1)
-  (#'< :key #'hit-l2))
 
-(define-sorting-predicate cluster-hit->
-  (#'> :key (lambda (hit) (+ (* (hit-l1 hit) (hit-l1 hit))
-                             (* (hit-l2 hit) (hit-l2 hit)))))
-  (#'> :key #'hit-l1)
-  (#'> :key #'hit-l2))
+;;;; Clustering ---------------------------------------------------------------
+(defun break-gaps (cluster)
+  "Return a list of new clusters from `cluster`, breaking gaps larger than `epsilon`.
 
-(defun cluster (hits &key (epsilon 10) (min-length 10))
+  The list may contain just a single element (the original `cluster`) if no gaps
+  are present.
+
+  "
+  (iterate
+    (with epsilon = *gap-epsilon*)
+    (with last-i = (1- (length cluster)))
+    (with start = 0)
+    (for hit :in-vector cluster :with-index i)
+    (for next-i = (1+ i))
+    (for next-hit = (if (= i last-i)
+                      nil
+                      (aref cluster next-i)))
+    (when (or (null next-hit)
+              (> (- (hit-l1 next-hit) (hit-l1 hit)) epsilon)
+              (> (- (hit-l2 next-hit) (hit-l2 hit)) epsilon))
+      (collect (subseq cluster start next-i))
+      (setf start next-i))))
+
+(defun filter-clusters (clusters)
+  "Return a list of clusters, with gaps broken and small clusters removed."
+  (let* ((min-length *minimum-cluster-length*)
+         (deduped (mapcar (lambda (cluster)
+                            (longest-increasing-subsequence
+                              (sort cluster #'< :key #'hit-l1)
+                              :key #'hit-l2
+                              :result-type 'vector))
+                          clusters))
+         (degapped (alexandria:mappend #'break-gaps deduped))
+         (results (remove-if (lambda (cluster)
+                               (< (length cluster) min-length))
+                             degapped)))
+    (prl (map 'list #'length clusters)
+         (map 'list #'length deduped)
+         (map 'list #'length degapped)
+         (map 'list #'length results))
+    results))
+
+(defun cluster (hits)
+  "Cluster the sorted `hits`, returning a list of vectors of `hit`s."
   (unless (zerop (length hits))
     (iterate
       (with last-i = (1- (length hits)))
       (with start = 0)
+      (with epsilon = *intercept-epsilon*)
       (for hit :in-vector hits :with-index i)
       (for next-i = (1+ i))
       (for next-hit = (if (= i last-i)
-                          nil
-                          (aref hits next-i)))
+                        nil
+                        (aref hits next-i)))
       (when (or (null next-hit)
-                (> (- (hit-c next-hit) (hit-c hit))
-                   epsilon))
-        (when (>= (- next-i start) min-length)
-          (collect (subseq hits start next-i) :into results))
+                (> (- (hit-c next-hit) (hit-c hit)) epsilon))
+        (collect (subseq hits start next-i) :into results)
         (setf start next-i))
-      (finally
-        (prl (mapcar #'length results))
-        (let ((deduped (mapcar (lambda (cluster)
-                                 (longest-increasing-subsequence (sort cluster #'< :key #'hit-l1) :key #'hit-l2))
-                               results)))
-          (prl (mapcar #'length deduped))
-          (return deduped))))))
-
-(defun foldback-score (seq &key (k 4) (w 12))
-  (let* ((minimizers-id (minimizers k w seq))
-         (minimizers-rc (minimizers k w (reverse-complement seq)))
-         (hits (hits minimizers-id minimizers-rc)))
-    (prl hits))
-  0.0d0)
-
-;; (defun run (filename)
-;;   (with-open-file (f filename :direction :input)
-;;     (gathering
-;;       (do-fastq (lambda (id seq)
-;;                       (identity (cons id (foldback-score seq))))
-;;                     f))))
+      (finally (return (filter-clusters results))))))
 
 
+;;;; Foldback Detection -------------------------------------------------------
+(defun cluster-bounds (cluster)
+  "Return (as multiple values) the bounds of the cluster's region on both reads."
+  (assert (plusp (length cluster)))
+  (let ((lo (aref cluster 0))
+        (hi (aref cluster (1- (length cluster)))))
+    (values (hit-l1 lo) (hit-l1 hi)
+            (hit-l2 lo) (hit-l2 hi))))
 
-(defparameter *data/okay-1*     (alexandria:read-file-into-string "data/okay1"))
-(defparameter *data/foldback-1* (alexandria:read-file-into-string "data/foldback1"))
-(defparameter *data/foldback-2* (alexandria:read-file-into-string "data/foldback2"))
-(defparameter *data/foldback-3* (alexandria:read-file-into-string "data/foldback2"))
+(defun cluster-lengths (cluster)
+  "Return (as multiple values) the length of the cluster's region on both reads."
+  (assert (plusp (length cluster)))
+  (let ((lo (aref cluster 0))
+        (hi (aref cluster (1- (length cluster)))))
+    (values (- (hit-l1 hi) (hit-l1 lo))
+            (- (hit-l2 hi) (hit-l2 lo)))))
 
-;; (write-random-fastq "test.fastq" 100 200 400)
+(defun region-in-foldback-position-p (read-length cluster)
+  "Return whether `cluster`'s region is in the expected position for a foldback region."
+  (multiple-value-bind (r1s r1e r2s r2e) (cluster-bounds cluster)
+    (declare (ignore r1s r2e))
+    (and (<= (abs (- r2s 0)) *foldback-position-epsilon*)
+         (<= (abs (- r1e read-length)) *foldback-position-epsilon*))))
 
+(defun region-long-enough-p (read-length cluster)
+  "Return whether `cluster`'s region is long enough for a foldback region."
+  (let ((min-length (max *minimum-foldback-length-absolute*
+                         (truncate (* read-length *minimum-foldback-length-relative*)))))
+    (multiple-value-bind (l1 l2) (cluster-lengths cluster)
+      (and (>= l1 min-length)
+           (>= l2 min-length)))))
+
+(defun find-foldback-clusters (read-length clusters)
+  "Return candidates for a foldback region from the given clusters.
+
+  May return an empty list of no clusters look like possible foldback regions.
+
+  "
+  (remove-if-not (alexandria:conjoin
+                   (curry #'region-in-foldback-position-p read-length)
+                   (curry #'region-long-enough-p read-length))
+                 clusters))
+
+
+;;;; Plotting -----------------------------------------------------------------
 (defun index-hits (clusters)
   (iterate
     (for i :from 1)
@@ -275,40 +422,133 @@
     (doseq (hit hits)
       (collect-hash (hit i)))))
 
-(defun run-test (sequence &key k w (mut? t) (cluster-epsilon 10) (cluster-min 10))
-  (let* ((seq (if mut? (mutate-dna sequence) sequence))
-         (rlen (length seq)))
-    (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
-      (conserve:write-row (list "c" "l1" "l2" "cluster") f)
-      (let* ((hits (hits (minimizers k w seq)
-                         (minimizers k w (reverse-complement seq))))
-             (clusters (index-hits (cluster hits :epsilon cluster-epsilon :min-length cluster-min))))
-        (doseq (hit hits)
-          (conserve:write-row (list (princ-to-string (hit-c hit))
-                                    (princ-to-string (hit-l1 hit))
-                                    (princ-to-string (hit-l2 hit))
-                                    (princ-to-string (gethash hit clusters "NA")))
-                              f))))
-    (write-line "Plotting…")
-    (rscript-file "plot.R" rlen)))
+(defun choose-tics (sequence &aux (length (length sequence)))
+  (cond
+    ((< length   500)    50)
+    ((< length  1000)   100)
+    ((< length  5000)   500)
+    ((< length 10000)  1000)
+    ((< length 50000)  5000)
+    (t 10000)))
+
+(defun plot-minimizers (sequence hits clusters)
+  (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
+    (conserve:write-row (list "c" "l1" "l2" "cluster") f)
+    (let ((cluster-index (index-hits clusters)))
+      (doseq (hit hits)
+        (conserve:write-row (list (princ-to-string (hit-c hit))
+                                  (princ-to-string (hit-l1 hit))
+                                  (princ-to-string (hit-l2 hit))
+                                  (princ-to-string (gethash hit cluster-index "NA")))
+                            f))))
+  (write-line "Plotting…")
+  (rscript-file "plot.R" (length sequence) (choose-tics sequence)))
+
+
+;;;; Scoring ------------------------------------------------------------------
+(defun foldback-score (sequence &key
+                       k w
+                       intercept-epsilon
+                       minimum-cluster-length
+                       gap-epsilon
+                       foldback-position-epsilon
+                       foldback-length-absolute
+                       foldback-length-relative
+                       (plot nil))
+  (let ((*intercept-epsilon* intercept-epsilon)
+        (*minimum-cluster-length* minimum-cluster-length)
+        (*gap-epsilon* gap-epsilon)
+        (*foldback-position-epsilon* foldback-position-epsilon)
+        (*minimum-foldback-length-absolute* foldback-length-absolute)
+        (*minimum-foldback-length-relative* foldback-length-relative))
+    (let* ((read-length (length sequence))
+           (hits (hits (minimizers k w sequence)
+                       (minimizers k w (reverse-complement sequence))))
+           (clusters (cluster hits))
+           (results (find-foldback-cluster read-length clusters)))
+      (format *debug-io* "~D minimizer hit~:P found (~F/kbp)~%"
+              (length hits)
+              (/ (length hits)
+                 (/ (length sequence) 1000)))
+      (format *debug-io* "~D cluster~:P found~%"
+              (length clusters))
+      (format *debug-io* "Found ~D candidate foldback cluster~:P: ~A~%"
+              (length results)
+              results)
+      (when plot
+        (plot-minimizers sequence hits clusters))
+      results)))
+
+
+;;;; Toplevel -----------------------------------------------------------------
+(defun run (filename)
+  (with-open-file (f filename :direction :input)
+    (gathering
+      (do-fastq (lambda (id seq)
+                      (identity (cons id (foldback-score seq))))
+                    (gather f)))))
+
 
 
 #; Scratch --------------------------------------------------------------------
 
+(defparameter *snp-chance*    3/100)
+(defparameter *indel-chance*  5/100)
+
 (defparameter *seq* (mutate-dna (random-foldback 20000)))
-
 (defparameter *seq* (random-foldback 20000))
-
 (defparameter *seq* (random-dna 20000))
 
-(run-test *seq* :k 12 :w 15 :mut? nil :cluster-epsilon 30 :cluster-min 10)
+(plot-minimizers *seq*
+               :k 8 :w 16
+               :intercept-epsilon 30
+               :cluster-min 10
+               :gap-epsilon 300
+               )
+
+(plot-minimizers (alexandria:read-file-into-string "data/okay2")
+               :k 8 :w 16
+               :intercept-epsilon 30
+               :cluster-min 10
+               :gap-epsilon 300)
+
+(plot-minimizers (pbpaste)
+               :k 8 :w 16
+               :intercept-epsilon 30
+               :cluster-min 10
+               :gap-epsilon 300)
+
+(foldback-score
+  (alexandria:read-file-into-string "data/foldback2")
+  :k 8 :w 16
+  :intercept-epsilon 30
+  :minimum-cluster-length 10
+  :gap-epsilon 300
+  :foldback-position-epsilon 100
+  :foldback-length-absolute 50
+  :foldback-length-relative 0.05
+  :plot t)
+
+;; (defun plot-minimizers (sequence &key
+;;                         k w
+;;                         (intercept-epsilon 10)
+;;                         (cluster-min 10)
+;;                         (gap-epsilon 10))
+;;   (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
+;;     (conserve:write-row (list "c" "l1" "l2" "cluster") f)
+;;     (let* ((hits (hits (minimizers k w sequence)
+;;                        (minimizers k w (reverse-complement sequence))))
+;;            (clusters (index-hits (cluster hits
+;;                                           :intercept-epsilon intercept-epsilon
+;;                                           :min-length cluster-min
+;;                                           :gap-epsilon gap-epsilon))))
+;;       (doseq (hit hits)
+;;         (conserve:write-row (list (princ-to-string (hit-c hit))
+;;                                   (princ-to-string (hit-l1 hit))
+;;                                   (princ-to-string (hit-l2 hit))
+;;                                   (princ-to-string (gethash hit clusters "NA")))
+;;                             f))))
+;;   (write-line "Plotting…")
+;;   (rscript-file "plot.R" (length sequence) (choose-tics sequence)))
 
 
-(run-test (alexandria:read-file-into-string "data/foldback4")
-          :k 8 :w 20
-          :mut? nil
-          :cluster-epsilon 30 :cluster-min 20)
-
-(run-test (alexandria:read-file-into-string "data/ligation-with-rep") :k 12 :w 25 :mut? nil)
-
-(run-test (pbpaste) :k 12 :w 20 :mut? nil)
