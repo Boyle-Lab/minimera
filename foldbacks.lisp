@@ -344,10 +344,10 @@
          (results (remove-if (lambda (cluster)
                                (< (length cluster) min-length))
                              degapped)))
-    (prl (map 'list #'length clusters)
-         (map 'list #'length deduped)
-         (map 'list #'length degapped)
-         (map 'list #'length results))
+    ;; (prl (map 'list #'length clusters)
+    ;;      (map 'list #'length deduped)
+    ;;      (map 'list #'length degapped)
+    ;;      (map 'list #'length results))
     results))
 
 (defun cluster (hits)
@@ -431,7 +431,7 @@
     ((< length 50000)  5000)
     (t 10000)))
 
-(defun plot-minimizers (sequence hits clusters)
+(defun plot-minimizers (info sequence hits clusters)
   (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
     (conserve:write-row (list "c" "l1" "l2" "cluster") f)
     (let ((cluster-index (index-hits clusters)))
@@ -442,7 +442,11 @@
                                   (princ-to-string (gethash hit cluster-index "NA")))
                             f))))
   (write-line "Plotting…")
-  (rscript-file "plot.R" (length sequence) (choose-tics sequence)))
+  (rscript-file "plot.R" (length sequence) (choose-tics sequence))
+  (destructuring-bind (id class pos rev)
+      (str:split "," info)
+    (declare (ignore rev))
+    (sh (list "cp" "matches.png" (format nil "plots/~A-~A-~A.png" class id pos)))))
 
 
 ;;;; Scoring ------------------------------------------------------------------
@@ -454,6 +458,7 @@
                        foldback-position-epsilon
                        foldback-length-absolute
                        foldback-length-relative
+                       info
                        (plot nil))
   (let ((*intercept-epsilon* intercept-epsilon)
         (*minimum-cluster-length* minimum-cluster-length)
@@ -465,7 +470,7 @@
            (hits (hits (minimizers k w sequence)
                        (minimizers k w (reverse-complement sequence))))
            (clusters (cluster hits))
-           (results (find-foldback-cluster read-length clusters)))
+           (results (find-foldback-clusters read-length clusters)))
       (format *debug-io* "~D minimizer hit~:P found (~F/kbp)~%"
               (length hits)
               (/ (length hits)
@@ -476,17 +481,23 @@
               (length results)
               results)
       (when plot
-        (plot-minimizers sequence hits clusters))
+        (plot-minimizers info sequence hits clusters)
+        ;; (break)
+        )
       results)))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
-(defun run (filename)
+(defun run (filename &rest args)
   (with-open-file (f filename :direction :input)
     (gathering
       (do-fastq (lambda (id seq)
-                      (identity (cons id (foldback-score seq))))
-                    (gather f)))))
+                  (format *debug-io* "~4%Checking record ~A~%" id)
+                  (let ((foldback-regions (apply #'foldback-score
+                                                 seq :info id
+                                                 args)))
+                    (gather (list id (length foldback-regions) foldback-regions))))
+                f))))
 
 
 
@@ -551,4 +562,21 @@
 ;;   (write-line "Plotting…")
 ;;   (rscript-file "plot.R" (length sequence) (choose-tics sequence)))
 
+
+(time
+  (let ((*debug-io*
+          ;; (make-broadcast-stream)
+          *debug-io*
+          ))
+    (remove-if (lambda (result)
+                 (null (third result)))
+               (run "data/9b58328c3b631816942cbe400a807241935897e6.manual-test.2.fastq"
+                    :k 8 :w 16
+                    :intercept-epsilon 30
+                    :minimum-cluster-length 10
+                    :gap-epsilon 300
+                    :foldback-position-epsilon 100
+                    :foldback-length-absolute 50
+                    :foldback-length-relative 0.05
+                    :plot t))))
 

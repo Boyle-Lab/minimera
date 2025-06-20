@@ -46,16 +46,17 @@ ggplot(matches, aes(x=x, y=y)) +
     title="Minimizer matches",
     x="Location in Read 1",
     y="Location in Read 2",
-  )
+  ) +
+  guides(color="none")
 
 ggsave("matches.png", width=7, height=7, unit="in", dpi=600)
 
 
-ggplot(intercepts, aes(x=y)) +
-  # geom_histogram(bins=100, aes(y=after_stat(count / pmax(20000, sqrt(2 * ((ymax - abs(x))**2)))))) +
-  geom_histogram(bins=30) +
-  labs(
-    title="y-intercepts of matches",
-  ) + geom_line(aes(y=h/100000000))
+# ggplot(intercepts, aes(x=y)) +
+#   # geom_histogram(bins=100, aes(y=after_stat(count / pmax(20000, sqrt(2 * ((ymax - abs(x))**2)))))) +
+#   geom_histogram(bins=30) +
+#   labs(
+#     title="y-intercepts of matches",
+#   ) + geom_line(aes(y=h/100000000))
 
-ggsave("intercepts.png")
+# ggsave("intercepts.png")
