@@ -4,3 +4,5 @@ data
 *.bed
 *.fastq
 *.png
+*.pdf
+*.prof
