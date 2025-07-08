@@ -7,6 +7,12 @@
 (in-package :foldbacks)
 
 ;;;; Data Generation ----------------------------------------------------------
+(defparameter *k* 8
+  "Size of kmers (in base pairs) to use for minimizers.")
+
+(defparameter *w* 16
+  "Size (total) of windows (in base pairs) to use for minimizer sketches.")
+
 (defparameter *foldback-position-epsilon* 50
   "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster.")
 
@@ -450,58 +456,89 @@
 
 
 ;;;; Scoring ------------------------------------------------------------------
-(defun foldback-score (sequence &key
-                       k w
-                       intercept-epsilon
-                       minimum-cluster-length
-                       gap-epsilon
-                       foldback-position-epsilon
-                       foldback-length-absolute
-                       foldback-length-relative
-                       info
-                       (plot nil))
-  (let ((*intercept-epsilon* intercept-epsilon)
-        (*minimum-cluster-length* minimum-cluster-length)
-        (*gap-epsilon* gap-epsilon)
-        (*foldback-position-epsilon* foldback-position-epsilon)
-        (*minimum-foldback-length-absolute* foldback-length-absolute)
-        (*minimum-foldback-length-relative* foldback-length-relative))
-    (let* ((read-length (length sequence))
-           (hits (hits (minimizers k w sequence)
-                       (minimizers k w (reverse-complement sequence))))
-           (clusters (cluster hits))
-           (results (find-foldback-clusters read-length clusters)))
-      (format *debug-io* "~D minimizer hit~:P found (~F/kbp)~%"
-              (length hits)
-              (/ (length hits)
-                 (/ (length sequence) 1000)))
-      (format *debug-io* "~D cluster~:P found~%"
-              (length clusters))
-      (format *debug-io* "Found ~D candidate foldback cluster~:P: ~A~%"
-              (length results)
-              results)
-      (when plot
-        (plot-minimizers info sequence hits clusters)
-        ;; (break)
-        )
-      results)))
+(defun foldbacks (sequence &key info (plot nil))
+  (let* ((read-length (length sequence))
+         (hits (hits (minimizers *k* *w* sequence)
+                     (minimizers *k* *w* (reverse-complement sequence))))
+         (clusters (cluster hits))
+         (results (find-foldback-clusters read-length clusters)))
+    (format *debug-io* "~D minimizer hit~:P found (~F/kbp)~%"
+            (length hits)
+            (/ (length hits)
+               (/ (length sequence) 1000)))
+    (format *debug-io* "~D cluster~:P found~%" (length clusters))
+    (format *debug-io* "Found ~D candidate foldback cluster~:P.~%" (length results))
+    (when (or plot results)
+      (plot-minimizers info sequence hits clusters))
+    results))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
-(defun run (filename &rest args)
-  (with-open-file (f filename :direction :input)
-    (gathering
-      (do-fastq (lambda (id seq)
-                  (format *debug-io* "~4%Checking record ~A~%" id)
-                  (let ((foldback-regions (apply #'foldback-score
-                                                 seq :info id
-                                                 args)))
-                    (gather (list id (length foldback-regions) foldback-regions))))
-                f))))
+(defun compute-foldback-coordinates (cluster alignment-pos reverse?)
+  (multiple-value-bind (start end) (cluster-bounds cluster)
+    (let ((pos (truncate (+ start end) 2)))
+      (values pos ; coord in read
+              (if reverse? ; coord in genome
+                (- alignment-pos pos)
+                (+ alignment-pos pos))))))
+
+(defun parse-read-info (read-info)
+  ;; 44c97e05-69a2-401a-a722-ac5c3c9080b1,normal,chr21:19180531,True
+  (destructuring-bind (read-name class alignment-location reversed) (str:split "," read-info)
+    (destructuring-bind (contig pos) (str:split ":" alignment-location)
+      (values read-name
+              class
+              contig
+              (parse-integer pos)
+              (alexandria:eswitch (reversed :test #'string=)
+                ("True" t)
+                ("False" nil))))))
+
+(defun run-read (read-info sequence &key output-stream bed-stream)
+  (conserve:write-row (list "read-id" "is-foldback" "foldback-point")
+                      output-stream)
+  (let* ((candidates (foldbacks sequence :info read-info))
+         (candidate (alexandria:extremum candidates #'> :key #'cluster-lengths)))
+    (multiple-value-bind (name class contig pos rev) (parse-read-info read-info)
+      (declare (ignore class))
+      (if candidate
+        (multiple-value-bind (read-coord genome-coord) (compute-foldback-coordinates candidate pos rev)
+          (conserve:write-row
+            (list name "true" (princ-to-string read-coord))
+            output-stream)
+          (let ((conserve:*delimiter* #\tab))
+            (conserve:write-row
+              (list contig
+                    (princ-to-string genome-coord)
+                    (princ-to-string (1+ genome-coord))
+                    (format nil "~A" read-info))
+              bed-stream)))
+        (conserve:write-row
+          (list name "false" "")
+          output-stream)))))
+
+(defun run (filename &key (output-basename "results"))
+  (with-open-file (input-stream filename :direction :input)
+    (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
+      (with-open-file (bed-stream (format nil "~A.bed" output-basename) :direction :output :if-exists :supersede)
+        (do-fastq (lambda (info seq)
+                    (format *debug-io* "~%Checking record ~A~%" info)
+                    (run-read info seq :output-stream output-stream :bed-stream bed-stream))
+                  input-stream)))))
 
 
 
 #; Scratch --------------------------------------------------------------------
+
+(defparameter *k* 8)
+(defparameter *w* 16)
+(defparameter *foldback-position-epsilon* 50)
+(defparameter *intercept-epsilon* 30)
+(defparameter *gap-epsilon* 300)
+(defparameter *minimum-cluster-length* 40)
+(defparameter *minimum-foldback-length-absolute* 50)
+(defparameter *minimum-foldback-length-relative* 0.05)
+
 
 (defparameter *snp-chance*    3/100)
 (defparameter *indel-chance*  5/100)
@@ -529,54 +566,10 @@
                :cluster-min 10
                :gap-epsilon 300)
 
-(foldback-score
-  (alexandria:read-file-into-string "data/foldback2")
-  :k 8 :w 16
-  :intercept-epsilon 30
-  :minimum-cluster-length 10
-  :gap-epsilon 300
-  :foldback-position-epsilon 100
-  :foldback-length-absolute 50
-  :foldback-length-relative 0.05
-  :plot t)
+(run "data/9b58328c3b631816942cbe400a807241935897e6.manual-test.2.fastq" :output-basename "results.2")
 
-;; (defun plot-minimizers (sequence &key
-;;                         k w
-;;                         (intercept-epsilon 10)
-;;                         (cluster-min 10)
-;;                         (gap-epsilon 10))
-;;   (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
-;;     (conserve:write-row (list "c" "l1" "l2" "cluster") f)
-;;     (let* ((hits (hits (minimizers k w sequence)
-;;                        (minimizers k w (reverse-complement sequence))))
-;;            (clusters (index-hits (cluster hits
-;;                                           :intercept-epsilon intercept-epsilon
-;;                                           :min-length cluster-min
-;;                                           :gap-epsilon gap-epsilon))))
-;;       (doseq (hit hits)
-;;         (conserve:write-row (list (princ-to-string (hit-c hit))
-;;                                   (princ-to-string (hit-l1 hit))
-;;                                   (princ-to-string (hit-l2 hit))
-;;                                   (princ-to-string (gethash hit clusters "NA")))
-;;                             f))))
-;;   (write-line "Plotting…")
-;;   (rscript-file "plot.R" (length sequence) (choose-tics sequence)))
+(run "out.fastq" :output-basename "results.unclassified")
 
+(run "out2.fastq" :output-basename "results.unclassified.2")
 
-(time
-  (let ((*debug-io*
-          ;; (make-broadcast-stream)
-          *debug-io*
-          ))
-    (remove-if (lambda (result)
-                 (null (third result)))
-               (run "data/9b58328c3b631816942cbe400a807241935897e6.manual-test.2.fastq"
-                    :k 8 :w 16
-                    :intercept-epsilon 30
-                    :minimum-cluster-length 10
-                    :gap-epsilon 300
-                    :foldback-position-epsilon 100
-                    :foldback-length-absolute 50
-                    :foldback-length-relative 0.05
-                    :plot t))))
-
+(run "out3.fastq" :output-basename "results.unclassified.3")

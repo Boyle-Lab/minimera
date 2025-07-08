@@ -1,0 +1,6 @@
+plots
+data
+*.csv
+*.bed
+*.fastq
+*.png

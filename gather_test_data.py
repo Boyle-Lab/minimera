@@ -114,15 +114,19 @@ def run(input_bam, input_queue, output_fastq):
 
     with open(output_fastq, 'w') as output_file:
         with bs.AlignmentFile(input_bam, 'rb') as bam:
-            for target in q:
+            for i, target in enumerate(q):
+                if i > 10000:
+                    return
                 rs = bam.fetch(target[1], target[2]-1, target[2]+1)
                 for r in rs:
                     if r.read_name == target[0]:
                         if should_check(r):
-                            contig, start, end = compute_igv_position(r)
-                            igv_go(r.read_name, contig, start, end)
+                            print('.', flush=True, end='')
+                            # contig, start, end = compute_igv_position(r)
+                            # igv_go(r.read_name, contig, start, end)
 
-                            classification = read_input()
+                            classification = 'unknown'
+                            # classification = read_input()
                             if classification is None:
                                 return
                             elif classification == 'skip':
