@@ -1,7 +1,7 @@
-(asdf:defsystem :foldbacks
+(asdf:defsystem :minimera
   :description "TODO"
   :author "Steve Losh <steve@stevelosh.com>"
-  :homepage "https://docs.stevelosh.com/adopt/"
+  :homepage "TODO"
 
   :license "TODO"
   :version "0.0.1"
@@ -12,6 +12,6 @@
   :serial t
   :components ((:module "src" :serial t
                 :components ((:file "package")
-                             (:file "foldbacks")))))
+                             (:file "main")))))
 
 

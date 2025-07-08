@@ -1,2 +1,2 @@
-(defpackage :foldbacks
+(defpackage :minimera
   (:use :cl :losh :iterate))

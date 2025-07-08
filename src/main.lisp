@@ -1,4 +1,4 @@
-(in-package :foldbacks)
+(in-package :minimera)
 
 ;;;; Configuration ------------------------------------------------------------
 (defparameter *k* 8
