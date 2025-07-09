@@ -25,13 +25,14 @@
 (defparameter *minimum-foldback-length-relative* 0.05
   "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded.")
 
-(defparameter *plot-foldbacks* nil)
+(defparameter *plot-foldbacks* nil
+  "Whether to generate plots (with the accompanying R script) of reads determined to be foldbacks.")
 
-(defparameter *plot-normal* nil)
+(defparameter *plot-normal* nil
+  "Whether to generate plots (with the accompanying R script) of reads determined *not* to be foldbacks.")
 
-(defparameter *worker-threads* 6)
-(defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity 12))
-(defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity 12))
+(defparameter *worker-threads* 6
+  "Number of worker threads to spawn when running in optimized mode.  Does not include the reader and writer threads.")
 
 ;;;; Data Generation ----------------------------------------------------------
 (defparameter *foldback-chance* 0.2)
@@ -435,7 +436,7 @@
   (loop :with result = 0
         :for i :from 0 :below w
         :do (setf result (logior (ash result 2)
-                                 (base-bits/id (aref sequence i))))
+                                 (base-bits (aref sequence i))))
         :finally (return result)))
 
 (defun minimizer/fast (k w chunk window-start)
@@ -771,8 +772,12 @@
                         (write-string bed-out bed-stream))))
                   input-stream)))))
 
+
 (defparameter *input-done* nil)
-(defparameter *work-done* nil)
+(defparameter *work-done*  nil)
+
+(defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
+(defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
 
 (defun run/fast (filename &key (output-basename "results"))
   (setf *input-done* nil
@@ -784,7 +789,7 @@
                      (lparallel.queue:push-queue fastq-read *input-queue*))
                    input-stream))
       (setf *input-done* t))
-    :name "FASTQ Reader")
+    :name "Minimera FASTQ Reader")
   (dotimes (i *worker-threads*)
     (bt2:make-thread
       (lambda ()
@@ -796,7 +801,7 @@
                                *output-queue*))
                       (t (progn)))))
         (setf *work-done* t))
-      :name (format nil "Worker Thread ~D" (1+ i))))
+      :name (format nil "Minimera Worker ~D" (1+ i))))
   (bt2:join-thread
     (bt2:make-thread
       (lambda ()
@@ -811,7 +816,7 @@
                                    (when bed-out
                                      (write-string bed-out bed-stream))))
                           (t (progn))))))))
-      :name "Output Writer")))
+      :name "Minimera Output Writer")))
 
 
 
