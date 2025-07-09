@@ -432,7 +432,7 @@
   (declare (optimize (speed 3) (safety 1) (debug 1)))
   (check-type sequence a8)
   (iterate (with-result result = 0)
-           (for base :in-simple-octet-array sequence :below w)
+           (for base :in-vector sequence :below w)
            (zapf result (wrap64 (logior (ash % 2) (base-bits base))))))
 
 (defun minimizer/fast (k w chunk window-start)
