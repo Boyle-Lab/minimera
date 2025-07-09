@@ -530,14 +530,14 @@
   "
   (let ((index-1 (group-by #'hash ms1 :test #'equal :map #'pos))
         (index-2 (group-by #'hash ms2 :test #'equal :map #'pos)))
-    (sort (coerce (iterate
-                    (for (minimizer locs-1) :in-hashtable index-1)
-                    (for locs-2 = (gethash minimizer index-2))
-                    (appending (alexandria:map-product (lambda (l1 l2)
-                                                         (make-hit (- l2 l1) l1 l2))
-                                                       locs-1 locs-2)))
-                  'vector)
-          #'hit<)))
+    (_ (iterate
+         (for (minimizer locs-1) :in-hashtable index-1)
+         (for locs-2 = (gethash minimizer index-2))
+         (appending (alexandria:map-product (lambda (l1 l2)
+                                              (make-hit (- l2 l1) l1 l2))
+                                            locs-1 locs-2)
+                    :into result)
+         (returning (sort (coerce result 'vector) #'hit<))))))
 
 
 
@@ -577,10 +577,6 @@
          (results (remove-if (lambda (cluster)
                                (< (length cluster) min-length))
                              degapped)))
-    ;; (prl (map 'list #'length clusters)
-    ;;      (map 'list #'length deduped)
-    ;;      (map 'list #'length degapped)
-    ;;      (map 'list #'length results))
     results))
 
 (defun cluster (hits)
@@ -599,7 +595,7 @@
                 (> (- (hit-c next-hit) (hit-c hit)) epsilon))
         (collect (subseq hits start next-i) :into results)
         (setf start next-i))
-      (finally (return (filter-clusters results))))))
+      (returning (filter-clusters results)))))
 
 
 ;;;; Foldback Detection -------------------------------------------------------
@@ -637,7 +633,7 @@
 (defun find-foldback-clusters (read-length clusters)
   "Return candidates for a foldback region from the given clusters.
 
-  May return an empty list of no clusters look like possible foldback regions.
+  May return an empty list if no clusters look like possible foldback regions.
 
   "
   (remove-if-not (alexandria:conjoin
@@ -647,15 +643,26 @@
 
 
 ;;;; Plotting -----------------------------------------------------------------
+(defparameter *plotting-code* (alexandria:read-file-into-string "plot.R"))
+
 (defun index-hits (clusters)
+  "Index the minimizers hits inside each cluster of `clusters`.
+
+  Return a hash table of `{hit: n}` where `n` is a cluster number (starting at 1)
+  for all hits.
+
+  This will be a large hash table, but it only used to color hits by cluster
+  when plotting.
+
+  "
   (iterate
     (for i :from 1)
     (for hits :in clusters)
-    (format t "cluster ~D: ~D hits~%" i (length hits))
     (doseq (hit hits)
       (collect-hash (hit i)))))
 
 (defun choose-tics (sequence &aux (length (length sequence)))
+  "Return an appropriate value for axis tics based on the length of `sequence`."
   (cond
     ((< length   500)    50)
     ((< length  1000)   100)
@@ -664,7 +671,7 @@
     ((< length 50000)  5000)
     (t 10000)))
 
-(defun plot-minimizers (info sequence hits clusters)
+(defun plot-minimizers (id sequence hits clusters &key (directory "./plots"))
   (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
     (conserve:write-row (list "c" "l1" "l2" "cluster") f)
     (let ((cluster-index (index-hits clusters)))
@@ -674,16 +681,15 @@
                                   (princ-to-string (hit-l2 hit))
                                   (princ-to-string (gethash hit cluster-index "NA")))
                             f))))
-  (write-line "Plotting…")
-  (rscript-file "plot.R" (length sequence) (choose-tics sequence))
-  (destructuring-bind (id class pos rev)
-      (str:split "," info)
-    (declare (ignore rev))
-    (sh (list "cp" "matches.png" (format nil "plots/~A-~A-~A.png" class id pos)))))
+  (rscript *plotting-code*
+           (length sequence)
+           (choose-tics sequence)
+           "hits.csv"
+           (format nil "~A/~A.png" directory id)))
 
 
-;;;; Scoring ------------------------------------------------------------------
-(defun foldbacks (sequence &key info (optimized nil))
+;;;; Main Entry Point ---------------------------------------------------------
+(defun foldbacks (id sequence &key (optimized nil))
   (if optimized
     (check-type sequence a8)
     (check-type sequence string))
@@ -695,77 +701,31 @@
                        (minimizers *k* *w* (reverse-complement sequence)))))
          (clusters (cluster hits))
          (results (find-foldback-clusters read-length clusters)))
-    ;; (format *debug-io* "~D minimizer hit~:P found (~F/kbp)~%"
-    ;;         (length hits)
-    ;;         (/ (length hits)
-    ;;            (/ (length sequence) 1000)))
-    ;; (format *debug-io* "~D cluster~:P found~%" (length clusters))
-    ;; (format *debug-io* "Found ~D candidate foldback cluster~:P.~%" (length results))
     (if results
-      (when *plot-foldbacks*
-        (plot-minimizers info sequence hits clusters))
-      (when *plot-normal*
-        (plot-minimizers info sequence hits clusters)))
+      (when *plot-foldbacks* (plot-minimizers id sequence hits clusters))
+      (when *plot-normal*    (plot-minimizers id sequence hits clusters)))
     results))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
-(defun compute-foldback-coordinates (cluster alignment-pos reverse?)
+(defun compute-foldback-position (cluster)
   (multiple-value-bind (start end) (cluster-bounds cluster)
-    (let ((pos (truncate (+ start end) 2)))
-      (values pos ; coord in read
-              (if reverse? ; coord in genome
-                (- alignment-pos pos)
-                (+ alignment-pos pos))))))
+    (truncate (+ start end) 2)))
 
-(defun parse-read-info (read-info)
-  ;; 44c97e05-69a2-401a-a722-ac5c3c9080b1,normal,chr21:19180531,True
-  (destructuring-bind (read-name class alignment-location reversed) (str:split "," read-info)
-    (destructuring-bind (contig pos) (str:split ":" alignment-location)
-      (values read-name
-              class
-              contig
-              (parse-integer pos)
-              (alexandria:eswitch (reversed :test #'string=)
-                ("True" t)
-                ("False" nil))))))
-
-(defun run-read (read-info sequence &key optimized)
-  (let* ((candidates (foldbacks sequence :info read-info :optimized optimized))
-         (candidate (alexandria:extremum candidates #'> :key #'cluster-lengths))
-         (read-info (if optimized
-                      (map 'string #'code-char read-info)
-                      read-info)))
-    (multiple-value-bind (name class contig pos rev) (parse-read-info read-info)
-      (declare (ignore class))
-      (if candidate
-        (multiple-value-bind (read-coord genome-coord) (compute-foldback-coordinates candidate pos rev)
-          (cons (conserve:write-row (list name "true" (princ-to-string read-coord)) nil)
-                (let ((conserve:*delimiter* #\tab))
-                  (conserve:write-row (list contig
-                                            (princ-to-string genome-coord)
-                                            (princ-to-string (1+ genome-coord))
-                                            (format nil "~A" read-info))
-                                      nil))))
-        (cons (conserve:write-row
-                (list name "false" "")
-                nil)
-              nil)))))
+(defun run-read (id sequence &key optimized)
+  (let* ((candidates (foldbacks id sequence :optimized optimized))
+         (candidate (alexandria:extremum candidates #'> :key #'cluster-lengths)))
+    (if candidate
+      (list id "true" (princ-to-string (compute-foldback-position candidate)))
+      (list id "false" ""))))
 
 (defun run/slow (filename &key (output-basename "results"))
   (with-open-file (input-stream filename :direction :input)
     (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
-      (conserve:write-row (list "read-id" "is-foldback" "foldback-point")
-                          output-stream)
-      (with-open-file (bed-stream (format nil "~A.bed" output-basename) :direction :output :if-exists :supersede)
-        (do-fastq (lambda (info seq)
-                    ;; (format *debug-io* "~%Checking record ~A~%" info)
-                    (destructuring-bind (csv-out . bed-out)
-                        (run-read info seq :optimized nil)
-                      (write-string csv-out output-stream)
-                      (when bed-out
-                        (write-string bed-out bed-stream))))
-                  input-stream)))))
+      (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
+      (do-fastq (lambda (id seq)
+                  (conserve:write-row (run-read id seq :optimized nil) output-stream))
+                input-stream))))
 
 
 (defparameter *input-done* nil)
@@ -774,108 +734,51 @@
 (defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
 (defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
 
+
+(defmacro do-thread (name &body body)
+  `(bt2:make-thread (lambda () ,@body) :name ,name))
+
 (defun run/fast (filename &key (output-basename "results"))
+  ;; Set up status variables.
   (setf *input-done* nil
         *work-done* nil)
-  (bt2:make-thread
-    (lambda ()
-      (with-open-file (input-stream filename :direction :input :element-type 'u8)
-        (map-fastq (lambda (fastq-read)
-                     (lparallel.queue:push-queue fastq-read *input-queue*))
-                   input-stream))
-      (setf *input-done* t))
-    :name "Minimera FASTQ Reader")
+
+  ;; Spawn single reader thread.
+  (do-thread "Minimera FASTQ Reader"
+    (with-open-file (input-stream filename :direction :input :element-type 'u8)
+      (map-fastq (lambda (fastq-read)
+                   (lparallel.queue:push-queue fastq-read *input-queue*))
+                 input-stream))
+    (setf *input-done* t))
+
+  ;; Spawn N worker threads.
   (dotimes (i *worker-threads*)
-    (bt2:make-thread
-      (lambda ()
-        (loop (multiple-value-bind (fastq-read found)
-                  (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
-                (cond ((and (not found) *input-done*) (return))
-                      (found (lparallel.queue:push-queue
-                               (run-read (id fastq-read) (seq fastq-read) :optimized t)
-                               *output-queue*))
-                      (t (progn)))))
-        (setf *work-done* t))
-      :name (format nil "Minimera Worker ~D" (1+ i))))
+    (do-thread (format nil "Minimera Worker ~D" (1+ i))
+      (loop (multiple-value-bind (fastq-read found)
+                (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
+              (cond ((and (not found) *input-done*) (return))
+                    (found (lparallel.queue:push-queue
+                             (run-read (id fastq-read) (seq fastq-read) :optimized t)
+                             *output-queue*))
+                    (t (progn)))))
+      (setf *work-done* t)))
+
+  ;; Spawn a single writer thread, and join it to wait for things to finish.
   (bt2:join-thread
-    (bt2:make-thread
-      (lambda ()
-        (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
-          (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
-          (with-open-file (bed-stream (format nil "~A.bed" output-basename) :direction :output :if-exists :supersede)
-            (loop (multiple-value-bind (out found)
-                      (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
-                    (cond ((and (not found) *work-done*) (return))
-                          (found (destructuring-bind (csv-out . bed-out) out
-                                   (write-string csv-out output-stream)
-                                   (when bed-out
-                                     (write-string bed-out bed-stream))))
-                          (t (progn))))))))
-      :name "Minimera Output Writer")))
+    (do-thread "Minimera Output Writer"
+      (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
+        (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
+        (loop (multiple-value-bind (out found)
+                  (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
+                (cond ((and (not found) *work-done*) (return))
+                      (found (conserve:write-row out output-stream))
+                      (t (progn)))))))))
 
 
 
 #; Scratch --------------------------------------------------------------------
 
-(defparameter *k* 8)
-(defparameter *w* 16)
-(defparameter *foldback-position-epsilon* 50)
-(defparameter *intercept-epsilon* 30)
-(defparameter *gap-epsilon* 300)
-(defparameter *minimum-cluster-length* 40)
-(defparameter *minimum-foldback-length-absolute* 50)
-(defparameter *minimum-foldback-length-relative* 0.05)
-
-
-(defparameter *snp-chance*    3/100)
-(defparameter *indel-chance*  5/100)
-
-(defparameter *seq* (mutate-dna (random-foldback 20000)))
-(defparameter *seq* (random-foldback 20000))
-(defparameter *seq* (random-dna 20000))
-
-(plot-minimizers *seq*
-               :k 8 :w 16
-               :intercept-epsilon 30
-               :cluster-min 10
-               :gap-epsilon 300
-               )
-
-(plot-minimizers (alexandria:read-file-into-string "data/okay2")
-               :k 8 :w 16
-               :intercept-epsilon 30
-               :cluster-min 10
-               :gap-epsilon 300)
-
-(plot-minimizers (pbpaste)
-               :k 8 :w 16
-               :intercept-epsilon 30
-               :cluster-min 10
-               :gap-epsilon 300)
-
-(run "data/9b58328c3b631816942cbe400a807241935897e6.manual-test.2.fastq" :output-basename "results.2")
-
-(run "out.fastq" :output-basename "results.unclassified")
-
-(run "out2.fastq" :output-basename "results.unclassified.2")
-
 (time (run/slow "big.fastq" :output-basename "bench.out"))
 
-(time (run/fast "big.fastq" :output-basename "bench.fast.out"))
-
-
-;; (defparameter *test-seq* (random-dna 1000))
-
-;; (check-implementation 6 10 *test-seq*)
-
-;; (minimizers 4 12 *test-seq*)
-;; (minimizers/fast 4 12 (map 'a8 #'char-code *test-seq*))
-
-;; (defparameter *data/string* (random-dna 10000000))
-;; (defparameter *data/bytes* (map 'a8 #'char-code *data/string*))
-
-;; (time (loop :repeat 1 :do (minimizers 15 25 *data/string*)))
-
-;; (profile (loop :repeat 10 :do (minimizers/fast 15 25 *data/bytes*)))
-
-;; (check-implementation 15 25 *data/string*)
+(progn (sb-ext:gc :full t)
+       (time (run/fast "big.fastq" :output-basename "bench.fast.out")))
