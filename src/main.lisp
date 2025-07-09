@@ -34,6 +34,7 @@
 (defparameter *worker-threads* 6
   "Number of worker threads to spawn when running in optimized mode.  Does not include the reader and writer threads.")
 
+
 ;;;; Data Generation ----------------------------------------------------------
 (defparameter *foldback-chance* 0.2)
 
@@ -270,9 +271,6 @@
     (replace result buffer :start2 start :end2 end)
     result))
 
-(defun bs (buffer)
-  (map 'string #'code-char buffer))
-
 (declaim (ftype (function (list) a8) revcat-buffers))
 
 (defun-inline revcat-buffers (buffers)
@@ -382,8 +380,6 @@
 (defun minimizer (k window window-start)
   "Return the `k`-minimizer of `window`.
 
-  Will return a cons of the (hashed) minimizer and its position in the sequence.
-
   `window-start` must the the start position of the window in the overall
   sequence, and is used to compute the position.
 
@@ -433,16 +429,16 @@
 
 
 (defun compute-initial-chunk (w sequence)
-  (loop :with result = 0
-        :for i :from 0 :below w
-        :do (setf result (logior (ash result 2)
-                                 (base-bits (aref sequence i))))
-        :finally (return result)))
+  (declare (optimize (speed 3) (safety 1) (debug 1)))
+  (check-type sequence a8)
+  (iterate (with-result result = 0)
+           (for base :in-simple-octet-array sequence :below w)
+           (zapf result (wrap64 (logior (ash % 2) (base-bits base))))))
 
 (defun minimizer/fast (k w chunk window-start)
   (declare (optimize (speed 3) (safety 1) (debug 1)))
-  (check-type k (integer 1 31))
-  (check-type w (integer 1 64))
+  (check-type k (integer 1 30))
+  (check-type w (integer 1 31))
   (check-type window-start (and fixnum (integer 0)))
   (iterate
     (with k2 = (* 2 k))
@@ -483,7 +479,8 @@
          :then (_ chunk
                  (ash _ 2) ; move
                  (ldb (byte w2 0) _) ; mask off old start base
-                 (logior _ (base-bits (aref sequence (1- end)))))) ; add new end base
+                 (logior _ (base-bits (aref sequence (1- end)))) ; add new base
+                 wrap64)) ; promise sbcl it's small enough
     (if prev
       ;; If we still have a previous minimizer, we just compare the new one and
       ;; check if it's better than that one.
