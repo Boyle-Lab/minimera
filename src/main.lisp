@@ -643,7 +643,7 @@
 
 
 ;;;; Plotting -----------------------------------------------------------------
-(defparameter *plotting-code* (alexandria:read-file-into-string "plot.R"))
+(defparameter *plotting-code* (alexandria:read-file-into-string "src/plot.R"))
 
 (defun index-hits (clusters)
   "Index the minimizers hits inside each cluster of `clusters`.
