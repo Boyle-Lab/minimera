@@ -485,10 +485,8 @@
       ;; If we still have a previous minimizer, we just compare the new one and
       ;; check if it's better than that one.
       (progn
-        (setf
-          (hash candidate) (ldb (byte k2 0) chunk)
-          (hash candidate) (phihash-chunk (hash candidate))
-          (pos candidate) (+ start w-k))
+        (setf (hash candidate) (phihash-chunk (ldb (byte k2 0) chunk))
+              (pos candidate) (+ start w-k))
         (when (< (hash candidate) (hash prev))
           (let ((next (copy-minimizer candidate)))
             (collect next)
