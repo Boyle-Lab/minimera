@@ -40,7 +40,7 @@ def compute_foldback_coordinate(foldback_pos, alignment_pos, is_rev):
 
 def output_bed(id, foldback_pos, contig, alignment_pos, is_rev):
     pos = compute_foldback_coordinate(foldback_pos, alignment_pos, is_rev)
-    print(f"{contig}\t{pos-1}\t{pos+1}\t{id}")
+    print(f"{contig}\t{pos-1}\t{pos+1}\t{id},{foldback_pos},{alignment_pos},{is_rev},{pos}")
 
 
 def run(in_fastq, result_csv):

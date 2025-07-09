@@ -1,5 +1,7 @@
 plots
 data
+results
+venv
 *.csv
 *.bed
 *.fastq

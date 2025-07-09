@@ -644,6 +644,7 @@
 
 ;;;; Plotting -----------------------------------------------------------------
 (defparameter *plotting-code* (alexandria:read-file-into-string "src/plot.R"))
+(defparameter *output-basename* nil)
 
 (defun index-hits (clusters)
   "Index the minimizers hits inside each cluster of `clusters`.
@@ -671,8 +672,12 @@
     ((< length 50000)  5000)
     (t 10000)))
 
-(defun plot-minimizers (id sequence hits clusters &key (directory "./plots"))
-  (with-open-file (f "hits.csv" :direction :output :if-exists :supersede)
+(defun plot-minimizers (id sequence hits clusters)
+  (uiop:with-temporary-file (:stream f
+                             :pathname p
+                             :direction :output
+                             :prefix "hits."
+                             :type "csv")
     (conserve:write-row (list "c" "l1" "l2" "cluster") f)
     (let ((cluster-index (index-hits clusters)))
       (doseq (hit hits)
@@ -680,12 +685,15 @@
                                   (princ-to-string (hit-l1 hit))
                                   (princ-to-string (hit-l2 hit))
                                   (princ-to-string (gethash hit cluster-index "NA")))
-                            f))))
-  (rscript *plotting-code*
-           (length sequence)
-           (choose-tics sequence)
-           "hits.csv"
-           (format nil "~A/~A.png" directory id)))
+                            f)))
+    (finish-output f)
+    (ensure-directories-exist (format nil "~A/plots/" *output-basename*))
+    (rscript *plotting-code*
+             (length sequence)
+             (choose-tics sequence)
+             (princ-to-string p)
+             (format nil "~A/plots/~A.png" *output-basename* id))))
+
 
 
 ;;;; Main Entry Point ---------------------------------------------------------
@@ -720,6 +728,7 @@
       (list id "false" ""))))
 
 (defun run/slow (filename &key (output-basename "results"))
+  (setf *output-basename* output-basename)
   (with-open-file (input-stream filename :direction :input)
     (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
       (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
@@ -734,7 +743,6 @@
 (defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
 (defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
 
-
 (defmacro do-thread (name &body body)
   `(bt2:make-thread (lambda () ,@body) :name ,name))
 
@@ -745,7 +753,8 @@
 (defun run/fast (filename &key (output-basename "results"))
   ;; Set up status variables.
   (setf *input-done* nil
-        *work-done* nil)
+        *work-done* nil
+        *output-basename* output-basename)
 
   ;; Spawn single reader thread.
   (do-thread "Minimera FASTQ Reader"
@@ -789,4 +798,6 @@
        (time (run/fast "big.fastq" :output-basename "bench.fast.out")))
 
 
-(run/fast "out.fastq" :output-basename "results")
+(setf *plot-foldbacks* t)
+
+(time (run/fast "data/fresh.fastq" :output-basename "results/fresh"))

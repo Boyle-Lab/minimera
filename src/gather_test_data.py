@@ -24,7 +24,7 @@ def igv_go(read_name, contig, start, end):
 RC = str.maketrans('ACGT', 'TGCA')
 
 def reverse_complement(seq):
-    return seq.translate(RC)
+    return seq.translate(RC)[::-1]
 
 def write_output(output_file, r, classification):
     seq = r.query_sequence
@@ -115,8 +115,6 @@ def run(input_bam, input_queue, output_fastq):
     with open(output_fastq, 'w') as output_file:
         with bs.AlignmentFile(input_bam, 'rb') as bam:
             for i, target in enumerate(q):
-                if i > 10000:
-                    return
                 rs = bam.fetch(target[1], target[2]-1, target[2]+1)
                 for r in rs:
                     if r.read_name == target[0]:
