@@ -738,6 +738,10 @@
 (defmacro do-thread (name &body body)
   `(bt2:make-thread (lambda () ,@body) :name ,name))
 
+(defun parse-read-id (bytes)
+  ;; TODO: Remove or document the comma splitting here.
+  (first (str:split "," (map 'string #'code-char bytes) :limit 2)))
+
 (defun run/fast (filename &key (output-basename "results"))
   ;; Set up status variables.
   (setf *input-done* nil
@@ -758,7 +762,8 @@
                 (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
               (cond ((and (not found) *input-done*) (return))
                     (found (lparallel.queue:push-queue
-                             (run-read (id fastq-read) (seq fastq-read) :optimized t)
+                             (run-read (parse-read-id (id fastq-read))
+                                       (seq fastq-read) :optimized t)
                              *output-queue*))
                     (t (progn)))))
       (setf *work-done* t)))
@@ -782,3 +787,6 @@
 
 (progn (sb-ext:gc :full t)
        (time (run/fast "big.fastq" :output-basename "bench.fast.out")))
+
+
+(run/fast "out.fastq" :output-basename "results")

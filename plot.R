@@ -3,11 +3,11 @@ library(tidyverse, quietly=TRUE)
 args <- commandArgs(trailingOnly=TRUE)
 rlen <- as.numeric(args[1])
 tics <- as.numeric(args[2])
+datafile <- args[3]
+outfile <- args[4]
 
-# data <- read_csv("hits-seq.csv")
-# data <- read_csv("hits-mut.csv")
 data <- read_csv(
-  "hits.csv",
+  datafile,
   col_types = list(col_integer(), col_integer(), col_integer(), col_factor())
 )
 
@@ -26,11 +26,9 @@ intercepts <- data |>
 
 xbreaks <- seq(0, rlen, by=tics)
 ybreaks <- seq(0, rlen, by=tics)
-# ybreaks <- c(rev(-seq(0, rlen, by=tics)), seq(tics, rlen, by=tics))
 
 ggplot(matches, aes(x=x, y=y)) +
   coord_fixed(xlim=c(0, rlen),
-              # ylim=c(-rlen, rlen),
               ylim=c(0, rlen),
               ratio=1) +
   scale_x_continuous(breaks=xbreaks) +
@@ -41,7 +39,6 @@ ggplot(matches, aes(x=x, y=y)) +
   geom_segment(x=0,    y=0,    xend=rlen, yend=0, color="#666666") +
   geom_segment(x=0,    y=rlen, xend=rlen, yend=rlen, color="#666666") +
   geom_segment(x=0,    y=0,    xend=rlen, yend=rlen, color="#AA6666", linetype="dashed") +
-  # geom_jitter(color="#00000066", shape='o', data=intercepts) +
   labs(
     title="Minimizer matches",
     x="Location in Read 1",
@@ -49,14 +46,4 @@ ggplot(matches, aes(x=x, y=y)) +
   ) +
   guides(color="none")
 
-ggsave("matches.png", width=7, height=7, unit="in", dpi=600)
-
-
-# ggplot(intercepts, aes(x=y)) +
-#   # geom_histogram(bins=100, aes(y=after_stat(count / pmax(20000, sqrt(2 * ((ymax - abs(x))**2)))))) +
-#   geom_histogram(bins=30) +
-#   labs(
-#     title="y-intercepts of matches",
-#   ) + geom_line(aes(y=h/100000000))
-
-# ggsave("intercepts.png")
+ggsave(outfile, width=7, height=7, unit="in", dpi=600)
