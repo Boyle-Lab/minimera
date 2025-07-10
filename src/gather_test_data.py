@@ -36,10 +36,10 @@ def write_output(output_file, r, classification):
         seq = reverse_complement(seq)
         qualities = qualities[::-1]
 
-    print(f'>{r.read_name},{classification},{contig}:{pos},{rev}', file=output_file)
-    print(f'{r.query_sequence}', file=output_file)
-    print(f'+',                  file=output_file)
-    print(f'{qualities}',        file=output_file, flush=True)
+    print(f'@{r.read_name},{classification},{contig}:{pos},{rev}', file=output_file)
+    print(f'{seq}',       file=output_file)
+    print(f'+',           file=output_file)
+    print(f'{qualities}', file=output_file, flush=True)
 
 
 def compute_igv_position(r):

@@ -1,29 +1,16 @@
 (in-package :minimera)
 
 ;;;; Configuration ------------------------------------------------------------
-(defparameter *k* 8
-  "Size of kmers (in base pairs) to use for minimizers.")
+(defparameter *k* 8)
+(defparameter *w* 16)
 
-(defparameter *w* 16
-  "Size (total) of windows (in base pairs) to use for minimizer sketches.")
+(defparameter *foldback-position-epsilon* 50)
+(defparameter *intercept-epsilon* 30)
+(defparameter *gap-epsilon* 300)
+(defparameter *minimum-cluster-length* 40)
+(defparameter *minimum-foldback-length-absolute* 50)
+(defparameter *minimum-foldback-length-relative* 0.05)
 
-(defparameter *foldback-position-epsilon* 50
-  "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster.")
-
-(defparameter *intercept-epsilon* 30
-  "Epsilon (in y-intercept space) used to cluster colinear points during the initial clustering step.")
-
-(defparameter *gap-epsilon* 300
-  "Maximum width (in y-intercept space) of an allowable gap in a cluster.  Gaps wider than this will result in splitting the cluster.")
-
-(defparameter *minimum-cluster-length* 40
-  "Minimum number of allowable points in a cluster.  Clusters with fewer than this many hits will be removed.")
-
-(defparameter *minimum-foldback-length-absolute* 50
-  "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded.")
-
-(defparameter *minimum-foldback-length-relative* 0.05
-  "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded.")
 
 (defparameter *plot-foldbacks* nil
   "Whether to generate plots (with the accompanying R script) of reads determined to be foldbacks.")
@@ -31,8 +18,10 @@
 (defparameter *plot-normal* nil
   "Whether to generate plots (with the accompanying R script) of reads determined *not* to be foldbacks.")
 
-(defparameter *worker-threads* 6
-  "Number of worker threads to spawn when running in optimized mode.  Does not include the reader and writer threads.")
+
+(defparameter *worker-threads* 6)
+
+(defparameter *output-directory* "results")
 
 
 ;;;; Data Generation ----------------------------------------------------------
@@ -307,7 +296,9 @@
                (unless (ensure-refill)
                  (error "Unexpected EOF, expected ~S." expected-char))
                (unless (= (char-code expected-char) (aref buffer i))
-                 (error "Bad byte ~X, expected ~X." (char-code expected-char) (aref buffer i)))
+                 (error "Bad byte ~2,'0X (~S), expected ~2,'0X (~S)."
+                        (aref buffer i) (code-char (aref buffer i))
+                        (char-code expected-char) expected-char))
                (incf i))
              (skip-line% (&key (allow-eof nil))
                "Skip the rest of the line, return number of bytes skipped (not including the NL)."
@@ -339,7 +330,7 @@
                  (returning (revcat-buffers result)))))
       (iterate
         (while (ensure-refill))
-        (chomp-byte #\>)
+        (chomp-byte #\@)
         (for id = (read-line%))
         (for seq = (read-line%))
         (chomp-byte #\+)
@@ -644,7 +635,6 @@
 
 ;;;; Plotting -----------------------------------------------------------------
 (defparameter *plotting-code* (alexandria:read-file-into-string "src/plot.R"))
-(defparameter *output-basename* nil)
 
 (defun index-hits (clusters)
   "Index the minimizers hits inside each cluster of `clusters`.
@@ -687,12 +677,12 @@
                                   (princ-to-string (gethash hit cluster-index "NA")))
                             f)))
     (finish-output f)
-    (ensure-directories-exist (format nil "~A/plots/" *output-basename*))
+    (ensure-directories-exist (format nil "~A/plots/" *output-directory*))
     (rscript *plotting-code*
              (length sequence)
              (choose-tics sequence)
              (princ-to-string p)
-             (format nil "~A/plots/~A.png" *output-basename* id))))
+             (format nil "~A/plots/~A.png" *output-directory* id))))
 
 
 
@@ -727,16 +717,16 @@
       (list id "true" (princ-to-string (compute-foldback-position candidate)))
       (list id "false" ""))))
 
-(defun run/slow (filename &key (output-basename "results"))
-  (setf *output-basename* output-basename)
+(defun run/slow (filename)
   (with-open-file (input-stream filename :direction :input)
-    (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
+    (with-open-file (output-stream (format nil "~A.csv" *output-directory*) :direction :output :if-exists :supersede)
       (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
       (do-fastq (lambda (id seq)
                   (conserve:write-row (run-read id seq :optimized nil) output-stream))
                 input-stream))))
 
 
+(defparameter *interactive* t)
 (defparameter *input-done* nil)
 (defparameter *work-done*  nil)
 
@@ -750,37 +740,62 @@
   ;; TODO: Remove or document the comma splitting here.
   (first (str:split "," (map 'string #'code-char bytes) :limit 2)))
 
-(defun run/fast (filename &key (output-basename "results"))
+
+(defun die (error)
+  (adopt:print-error-and-exit
+    error
+    :exit-function (lambda (code)
+                     (sb-ext:exit :code code
+                                  :abort t
+                                  :timeout 4))))
+
+(defmacro with-exit-during-noninteractive-mode (&body body)
+  "Run `body`, killing everything upon an error when running noninteractively."
+  (with-gensyms (thunk err)
+    `(let ((,thunk (lambda () ,@body)))
+       (if *interactive*
+           (funcall ,thunk)
+           (handler-case (funcall ,thunk)
+             (error (,err) (die ,err)))))))
+
+(defun run/fast (filename)
   ;; Set up status variables.
-  (setf *input-done* nil
-        *work-done* nil
-        *output-basename* output-basename)
+  (setf *input-done* nil *work-done* nil)
+
+  ;; Make sure the output directory exists.
+  (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
 
   ;; Spawn single reader thread.
   (do-thread "Minimera FASTQ Reader"
-    (with-open-file (input-stream filename :direction :input :element-type 'u8)
-      (map-fastq (lambda (fastq-read)
-                   (lparallel.queue:push-queue fastq-read *input-queue*))
-                 input-stream))
-    (setf *input-done* t))
+    (with-exit-during-noninteractive-mode
+      (flet ((run% (stream)
+               (map-fastq (lambda (fastq-read)
+                            (lparallel.queue:push-queue fastq-read *input-queue*))
+                          stream)))
+        (if (string= filename "-")
+          (run% *standard-input*)
+          (with-open-file (input-stream filename :direction :input :element-type 'u8)
+            (run% input-stream))))
+      (setf *input-done* t)))
 
   ;; Spawn N worker threads.
   (dotimes (i *worker-threads*)
     (do-thread (format nil "Minimera Worker ~D" (1+ i))
-      (loop (multiple-value-bind (fastq-read found)
-                (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
-              (cond ((and (not found) *input-done*) (return))
-                    (found (lparallel.queue:push-queue
-                             (run-read (parse-read-id (id fastq-read))
-                                       (seq fastq-read) :optimized t)
-                             *output-queue*))
-                    (t (progn)))))
-      (setf *work-done* t)))
+      (with-exit-during-noninteractive-mode
+        (loop (multiple-value-bind (fastq-read found)
+                  (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
+                (cond ((and (not found) *input-done*) (return))
+                      (found (lparallel.queue:push-queue
+                               (run-read (parse-read-id (id fastq-read))
+                                         (seq fastq-read) :optimized t)
+                               *output-queue*))
+                      (t (progn)))))
+        (setf *work-done* t))))
 
   ;; Spawn a single writer thread, and join it to wait for things to finish.
   (bt2:join-thread
     (do-thread "Minimera Output Writer"
-      (with-open-file (output-stream (format nil "~A.csv" output-basename) :direction :output :if-exists :supersede)
+      (with-open-file (output-stream (format nil "~A/foldbacks.csv" *output-directory*) :direction :output :if-exists :supersede)
         (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
         (loop (multiple-value-bind (out found)
                   (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
@@ -789,15 +804,200 @@
                       (t (progn)))))))))
 
 
+;;;; UI -----------------------------------------------------------------------
+(adopt:define-string *documentation*
+  "Minimera is a tool for detecting foldback chimeric reads in Oxford Nanopore ~
+   data using minimizers.~@
+   ~@
+   Reads will be read from the specified fastq file (or stdin if - is given) and ~
+   the results written to foldbacks.csv inside the specified output directory.  ~
+   If plots are generated they will be inside a plots/ subdirectory of the ~
+   output directory.")
 
-#; Scratch --------------------------------------------------------------------
+(defparameter *o/help*
+  (adopt:make-option 'help
+    :help "Display help and exit."
+    :long "help"
+    :short #\h
+    :reduce (constantly t)))
 
-(time (run/slow "big.fastq" :output-basename "bench.out"))
+(defparameter *o/threads*
+  (adopt:make-option 'threads
+    :help "Number of worker threads to spawn. Does not include the reader and writer threads (default: 1)."
+    :long "threads"
+    :short #\j
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 1
+    :key #'parse-integer))
 
-(progn (sb-ext:gc :full t)
-       (time (run/fast "big.fastq" :output-basename "bench.fast.out")))
+(defparameter *o/output-directory*
+  (adopt:make-option 'output-directory
+    :help "Output directory (required)."
+    :long "output"
+    :short #\o
+    :parameter "PATH"
+    :reduce #'adopt:last))
+
+(defparameter *o/k*
+  (adopt:make-option 'k
+    :help "Size of kmers (in base pairs) to use for minimizers (default: 8)."
+    :long "kmer-size"
+    :short #\K
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 8
+    :key #'parse-integer))
+
+(defparameter *o/w*
+  (adopt:make-option 'w
+    :help "Size (total) of windows (in base pairs) to use for minimizer sketches (default: 16)."
+    :long "window-size"
+    :short #\W
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 16
+    :key #'parse-integer))
+
+(defparameter *o/foldback-position-epsilon*
+  (adopt:make-option 'foldback-position-epsilon
+    :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 50)."
+    :long "foldback-position-epsilon"
+    :short #\F
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 50
+    :key #'parse-integer))
+
+(defparameter *o/intercept-epsilon*
+  (adopt:make-option 'intercept-epsilon
+    :help "Epsilon (in y-intercept space) used to cluster colinear points during the initial clustering step (default: 30)."
+    :long "intercept-epsilon"
+    :short #\I
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 30
+    :key #'parse-integer))
+
+(defparameter *o/gap-epsilon*
+  (adopt:make-option 'gap-epsilon
+    :help "Maximum width (in y-intercept space) of an allowable gap in a cluster.  Gaps wider than this will result in splitting the cluster (default: 300)."
+    :long "gap-epsilon"
+    :short #\G
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 300
+    :key #'parse-integer))
+
+(defparameter *o/minimum-cluster-length*
+  (adopt:make-option 'minimum-cluster-length
+    :help "Minimum number of allowable points in a cluster.  Clusters with fewer than this many hits will be removed (default: 40)."
+    :long "minimum-cluster-length"
+    :short #\C
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 40
+    :key #'parse-integer))
+
+(defparameter *o/minimum-foldback-length-absolute*
+  (adopt:make-option 'minimum-foldback-length-absolute
+    :help "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded (default: 50)."
+    :long "minimum-foldback-length-absolute"
+    :short #\A
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 50
+    :key #'parse-integer))
+
+(defparameter *o/minimum-foldback-length-relative*
+  (adopt:make-option 'minimum-foldback-length-relative
+    :help "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded (default: 0.05)."
+    :long "minimum-foldback-length-relative"
+    :short #\R
+    :parameter "X"
+    :reduce #'adopt:last
+    :initial-value 0.05
+    :key #'parse-float:parse-float))
+
+(adopt:defparameters (*o/plot/foldbacks* *o/plot/no-foldbacks*)
+  (adopt:make-boolean-options 'plot-foldbacks
+    :long "plot-foldbacks"
+    :help "Generate plots for all reads determined to be foldbacks."
+    :help-no "Do not generate plots for reads determined to be foldbacks (the default)."))
+
+(adopt:defparameters (*o/plot/normal* *o/plot/no-normal*)
+  (adopt:make-boolean-options 'plot-normal
+    :long "plot-normal"
+    :help "Generate plots for all reads determined to be normal."
+    :help-no "Do not generate plots for reads determined to be normal (the default)."))
+
+(defparameter *ui*
+  (adopt:make-interface
+    :name "minimera"
+    :usage "[OPTIONS] --output PATH FASTQ"
+    :summary "detect foldback chimeric reads using minimizers"
+    :help *documentation*
+    :contents
+    (list *o/help*
+          *o/threads*
+          *o/output-directory*
+          (adopt:make-group 'algorithm
+            :title "Algorithm Options"
+            :options (list *o/k*
+                           *o/w*
+                           *o/foldback-position-epsilon*
+                           *o/intercept-epsilon*
+                           *o/gap-epsilon*
+                           *o/minimum-cluster-length*
+                           *o/minimum-foldback-length-absolute*
+                           *o/minimum-foldback-length-relative*))
+          (adopt:make-group 'plotting
+            :title "Plotting Options"
+            :help "Minimera can optionally generate plots of the minimizers for reads.  This requires Rscript and Tidyverse libraries to be installed.  Generating these plots is very slow, but they can be useful to debug edge cases."
+            :options (list *o/plot/foldbacks*
+                           *o/plot/no-foldbacks*
+                           *o/plot/normal*
+                           *o/plot/no-normal*)))))
 
 
-(setf *plot-foldbacks* t)
-
-(time (run/fast "data/fresh.fastq" :output-basename "results/fresh"))
+(defun toplevel ()
+  (adopt::quit-on-ctrl-c ()
+    (multiple-value-bind (arguments options) (adopt:parse-options-or-exit *ui*)
+      (when (gethash 'help options)
+        (adopt:print-help-and-exit *ui*))
+      (setf
+        *interactive* nil
+        *worker-threads* (gethash 'threads options)
+        *k* (gethash 'k options)
+        *w* (gethash 'w options)
+        *foldback-position-epsilon* (gethash 'foldback-position-epsilon options)
+        *intercept-epsilon* (gethash 'intercept-epsilon options)
+        *gap-epsilon* (gethash 'gap-epsilon options)
+        *minimum-cluster-length* (gethash 'minimum-cluster-length options)
+        *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
+        *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
+        *plot-foldbacks* (gethash 'plot-foldbacks options)
+        *plot-normal* (gethash 'plot-normal options)
+        *output-directory* (gethash 'output-directory options))
+      (handler-case
+          (progn
+            (assert *output-directory* () "Output directory must be specified.")
+            (assert (= 1 (length arguments)) () "Exactly one .fastq file must be specified.")
+            (assert (<= 1 *w* 31) () "Invalid window size ~A, must be in the range [1, 31]." *w*)
+            (assert (<= 1 *k* 30) () "Invalid kmer size ~A, must be in the range [1, 30]." *k*)
+            (assert (> *w* *k*) () "Window size (~A) must be larger than kmer size (~A)." *w* *k*)
+            (assert (plusp *foldback-position-epsilon*) ()
+              "Foldback position epsilon (~A) must be positive." *foldback-position-epsilon*)
+            (assert (plusp *intercept-epsilon*) ()
+              "Intercept epsilon (~A) must be positive." *intercept-epsilon*)
+            (assert (plusp *gap-epsilon*) ()
+              "Gap epsilon (~A) must be positive." *gap-epsilon*)
+            (assert (plusp *minimum-cluster-length*) ()
+              "Minimum cluster length (~A) must be positive." *minimum-cluster-length*)
+            (assert (plusp *minimum-foldback-length-absolute*) ()
+              "Minimum foldback length (absolute) (~A) must be positive." *minimum-foldback-length-absolute*)
+            (assert (<= 0.0 *minimum-foldback-length-relative* 1.0) ()
+              "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
+            (run/fast (first arguments)))
+        (error (e)
+               (adopt:print-error-and-exit e))))))
