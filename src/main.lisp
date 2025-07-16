@@ -24,71 +24,6 @@
 (defparameter *output-directory* "results")
 
 
-;;;; Data Generation ----------------------------------------------------------
-(defparameter *foldback-chance* 0.2)
-
-(defun random-dna (n)
-  (values (iterate (repeat n)
-                   (collect (random-elt "ACTG") :result-type 'string))
-          (format nil "~A real" (uuid:make-v4-uuid))))
-
-(defparameter *snp-chance*    5/100)
-(defparameter *indel-chance* 10/100)
-
-(defun mutate-dna (seq)
-  (iterate
-    (for ch :in-string seq)
-    (unless (randomp *indel-chance*)
-      (collect (if (randomp *snp-chance*)
-                 (random-elt "ATCG")
-                 ch)
-               :result-type 'string))
-    (when (randomp *indel-chance*)
-      (do-repeat (random-range 1 5)
-        (collect (random-elt "ATCG") :result-type 'string)))))
-
-(defun random-foldback (n)
-  (let* ((foldback-fraction (random-range 0.3 1.0))
-         (real-length (truncate (/ n (1+ foldback-fraction))))
-         (foldback-length (- n real-length))
-         (prefix (iterate (repeat real-length)
-                          (collect (random-elt "ACTG") :result-type 'string)))
-         (suffix (reverse-complement (subseq prefix (- (length prefix) foldback-length))))
-         (adapter (random-dna (random-range 80 100))))
-    ;; (format t "~v@A~%~v@A" real-length prefix real-length (reverse suffix))
-    (values (concatenate 'string prefix adapter suffix)
-            (format nil "~A foldback ~D" (uuid:make-v4-uuid) foldback-length)
-            foldback-length)))
-
-(defun random-quality (n)
-  (iterate (repeat n)
-           (collect (random-elt "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQ") :result-type 'string)))
-
-(defun random-fastq-entry (n)
-  (multiple-value-bind (seq id)
-      (if (randomp *foldback-chance*)
-        (random-foldback n)
-        (random-dna n))
-    (format nil ">~A~%~A~%+~%~A~%"
-            (string-downcase id)
-            seq
-            (random-quality n))))
-
-(defun write-random-fastq (filename entries min-length max-length)
-  (with-open-file (f filename :direction :output :if-exists :supersede)
-    (do-repeat entries
-      (write-string (random-fastq-entry
-                      (random-range-inclusive min-length max-length))
-                    f))))
-
-(defun print-foldback (seq n)
-  (let ((width (- (length seq) n)))
-    (format t "~v@A~%~v@A"
-            width (subseq seq 0 width)
-            width (reverse (subseq seq width))))
-  (values))
-
-
 ;;;; Longest Increasing Subsequence -------------------------------------------
 
 ;;; Based on Rosetta code, cleaned up and extended to allow :key function:
@@ -225,123 +160,6 @@
 
 (defun-inline phihash-chunk (chunk)
   (hash64 chunk))
-
-
-;;;; FASTQ (Reference) --------------------------------------------------------
-(defun do-fastq (function stream)
-  "Read a FASTQ from `stream` and call `(function id sequence)` on each entry."
-  (iterate
-    (until (eql :eof (peek-char nil stream nil :eof)))
-    (assert (char= #\> (read-char stream)))
-    (for id = (read-line stream))
-    (for seq = (read-line stream))
-    (assert (char= #\+ (read-char stream)))
-    (peek-char #\newline stream) (read-char stream) ; +
-    (peek-char #\newline stream) (read-char stream) ; quality scores
-    (funcall function id seq)))
-
-
-;;;; FASTQ (Optimized) --------------------------------------------------------
-(deftype buffer-length ()
-  `(integer 1 ,array-dimension-limit))
-
-(deftype u8 ()
-  '(unsigned-byte 8))
-
-(deftype a8 ()
-  '(simple-array u8 (*)))
-
-(defstruct (fastq-read (:conc-name nil))
-  (id nil :type (simple-array u8 (*)))
-  (seq nil :type (simple-array u8 (*))))
-
-(defun-inline copy-buffer (buffer start end)
-  (let ((result (make-array (- end start) :element-type 'u8)))
-    (replace result buffer :start2 start :end2 end)
-    result))
-
-(declaim (ftype (function (list) a8) revcat-buffers))
-
-(defun-inline revcat-buffers (buffers)
-  (cond ((null buffers) (make-array 0 :element-type 'u8))
-        ((null (rest buffers)) (first buffers))
-        (t (iterate
-             (with total = (reduce #'+ buffers :key #'length))
-             (with-result result = (make-array total :element-type 'u8))
-             (with end = total)
-             (for buffer in buffers)
-             (for n = (length buffer))
-             (replace result buffer :start1 (- end n))
-             (decf end n)))))
-
-(defun map-fastq (function stream &key (buffer-length (* 10 (expt 2 20))))
-  (declare (optimize (speed 3) (safety 1) (debug 1)))
-  (check-type buffer-length buffer-length)
-  (let ((buffer (make-array buffer-length :element-type 'u8))
-        (i 0)
-        (end 0)
-        (refills 0))
-    (declare (type a8 buffer)
-             (type fixnum refills)
-             (type (integer 0 #.array-total-size-limit) i end))
-    (labels ((ensure-refill ()
-               "Refill buffer if necessary and return whether we have data left."
-               (if (>= i end)
-                 (progn (setf i 0
-                              end (read-sequence buffer stream))
-                        (incf refills)
-                        (not (zerop end))) ; eof if we didn't read anything
-                 t)) ; not at end of buffer, definitely not eof yet
-             (chomp-byte (expected-char)
-               (unless (ensure-refill)
-                 (error "Unexpected EOF, expected ~S." expected-char))
-               (unless (= (char-code expected-char) (aref buffer i))
-                 (error "Bad byte ~2,'0X (~S), expected ~2,'0X (~S)."
-                        (aref buffer i) (code-char (aref buffer i))
-                        (char-code expected-char) expected-char))
-               (incf i))
-             (skip-line% (&key (allow-eof nil))
-               "Skip the rest of the line, return number of bytes skipped (not including the NL)."
-               (iterate
-                 (with-result bytes-read = 0)
-                 (unless (ensure-refill)
-                   (if allow-eof
-                     (finish)
-                     (error "Unexpected EOF skipping line.")))
-                 (for n = (position (char-code #\newline) buffer :start i))
-                 (if n
-                   (progn (incf bytes-read (- n i))
-                          (setf i (1+ n))
-                          (finish))
-                   (progn (incf bytes-read (- end i))
-                          (setf i end)))))
-             (read-line% ()
-               (iterate
-                 (with result = nil)
-                 (unless (ensure-refill)
-                   (error "Unexpected EOF reading line."))
-                 (for n = (position (char-code #\newline) buffer :start i))
-                 (if n
-                   (progn (push (copy-buffer buffer i n) result)
-                          (setf i (1+ n))
-                          (finish))
-                   (progn (push (copy-buffer buffer i end) result)
-                          (setf i end)))
-                 (returning (revcat-buffers result)))))
-      (iterate
-        (while (ensure-refill))
-        (chomp-byte #\@)
-        (for id = (read-line%))
-        (for seq = (read-line%))
-        (chomp-byte #\+)
-        (skip-line%) ; + line
-        (for quality-length = (skip-line% :allow-eof t)) ; quality scores
-        (unless (= quality-length (length seq))
-          (error "Mismatched number of quality scores (~D) for read of length ~D."
-                 quality-length (length seq)))
-        (funcall function (make-fastq-read :id id :seq seq)))
-      ;; (print refills)
-      (values))))
 
 
 ;;;; Minimizers ---------------------------------------------------------------
@@ -531,7 +349,6 @@
          (returning (sort (coerce result 'vector) #'hit<))))))
 
 
-
 ;;;; Clustering ---------------------------------------------------------------
 (defun break-gaps (cluster)
   "Return a list of new clusters from `cluster`, breaking gaps larger than `epsilon`.
@@ -685,9 +502,64 @@
              (format nil "~A/plots/~A.png" *output-directory* id))))
 
 
+;;;; Alignments ---------------------------------------------------------------
+(defparameter *alignments* nil)
+
+(defun parse-alignment-file (path)
+  (with-open-file (stream path)
+    (conserve:read-row stream) ; header
+    (iterate
+      (for (id contig pos rev flag cigar) :in-stream stream :using #'conserve:read-row)
+      (declare (ignorable flag))
+      (collect-hash (id (list contig
+                              (parse-integer pos)
+                              (string= rev "1")
+                              cigar))
+                    :test #'equal))))
+
+(defun parse-cigar (cigar-string)
+  (gathering
+    (ppcre:do-register-groups ((#'parse-integer n) op)
+        ("([0-9]+)?([^0-9])" cigar-string)
+      (gather (cons (char op 0) (or n 1))))))
+
+(defun alignment-length (cigar)
+  (loop :for (op . n) :in cigar
+        :summing (ecase op
+                   ((#\S #\H #\I) 0)
+                   ((#\M #\= #\X #\D) n))))
+
+(defun compute-reference-offset (cigar foldback-point)
+  (let ((offset 0))
+    (destructuring-bind (op . n) (first cigar)
+      (case op
+        ;; Account for the weird start position in the case of soft clip.
+        (#\S (decf offset n))
+        ;; If it's hard clipped we wouldn't have included that bit in the read
+        ;; sequence we searched for minimizers, I think?
+        (#\H (progn (pop cigar)))))
+    (iterate
+      (with f = foldback-point)
+      (for (op . n) :in cigar)
+      (while (plusp f))
+      (ecase op
+        ((#\D) (incf offset n))
+        ((#\M #\= #\X #\S) (progn (incf offset (min f n))
+                                  (setf f (max 0 (- f n)))))
+        ((#\I) (setf f (max 0 (- f n))))))
+    offset))
+
+(defun compute-reference-position (pos cigar-string foldback-point is-rev)
+  (let ((cigar (parse-cigar cigar-string)))
+    (if is-rev
+        (let* ((pos (+ pos (alignment-length cigar)))
+               (cigar (reverse cigar)))
+          (- pos (compute-reference-offset cigar foldback-point)))
+      (+ pos (compute-reference-offset cigar foldback-point)))))
+
 
 ;;;; Main Entry Point ---------------------------------------------------------
-(defun foldbacks (id sequence &key (optimized nil))
+(defun find-foldback (id sequence &key (optimized nil))
   (if optimized
     (check-type sequence a8)
     (check-type sequence string))
@@ -698,11 +570,13 @@
                  (hits (minimizers *k* *w* sequence)
                        (minimizers *k* *w* (reverse-complement sequence)))))
          (clusters (cluster hits))
-         (results (find-foldback-clusters read-length clusters)))
+         (results (find-foldback-clusters read-length clusters))
+         (result (alexandria:extremum results #'> :key #'cluster-lengths)))
     (if results
       (when *plot-foldbacks* (plot-minimizers id sequence hits clusters))
       (when *plot-normal*    (plot-minimizers id sequence hits clusters)))
-    results))
+    result))
+
 
 
 ;;;; Toplevel -----------------------------------------------------------------
@@ -711,18 +585,40 @@
     (truncate (+ start end) 2)))
 
 (defun run-read (id sequence &key optimized)
-  (let* ((candidates (foldbacks id sequence :optimized optimized))
-         (candidate (alexandria:extremum candidates #'> :key #'cluster-lengths)))
+  (let ((candidate (find-foldback id sequence :optimized optimized)))
     (if candidate
-      (list id "true" (princ-to-string (compute-foldback-position candidate)))
-      (list id "false" ""))))
+      (list id t (compute-foldback-position candidate))
+      (list id nil nil))))
+
+(defun write-csv-result (result stream)
+  (destructuring-bind (id is-foldback foldback-point) result
+    (conserve:write-row (list id
+                              (if is-foldback "true" "false")
+                              (if foldback-point
+                                (princ-to-string foldback-point)
+                                ""))
+                        stream)))
+
+(defun write-bed-result (result stream)
+  (destructuring-bind (id is-foldback foldback-point) result
+    (when is-foldback
+      (when-let ((alignment-info (gethash id *alignments*)))
+        (destructuring-bind (contig pos is-rev cigar) alignment-info
+          (let ((conserve:*delimiter* #\tab)
+                (reference-position (compute-reference-position pos cigar foldback-point is-rev)))
+            (conserve:write-row (mapcar 'princ-to-string
+                                        (list contig
+                                              (max 0 (1- reference-position))
+                                              (1+ reference-position)
+                                              id))
+                                stream)))))))
 
 (defun run/slow (filename)
   (with-open-file (input-stream filename :direction :input)
     (with-open-file (output-stream (format nil "~A.csv" *output-directory*) :direction :output :if-exists :supersede)
       (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
       (do-fastq (lambda (id seq)
-                  (conserve:write-row (run-read id seq :optimized nil) output-stream))
+                  (write-csv-result (run-read id seq :optimized nil) output-stream))
                 input-stream))))
 
 
@@ -730,15 +626,16 @@
 (defparameter *input-done* nil)
 (defparameter *work-done*  nil)
 
-(defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
-(defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 4 *worker-threads*)))
+(defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 2 *worker-threads*)))
+(defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 2 *worker-threads*)))
+(defparameter *progress-queue* (lparallel.queue:make-queue))
 
-(defmacro do-thread (name &body body)
-  `(bt2:make-thread (lambda () ,@body) :name ,name))
 
 (defun parse-read-id (bytes)
   ;; TODO: Remove or document the comma splitting here.
-  (first (str:split "," (map 'string #'code-char bytes) :limit 2)))
+  (first (str:split " " (first (str:split "," (map 'string #'code-char bytes)
+                                          :limit 2))
+                    :limit 2)))
 
 
 (defun die (error)
@@ -758,246 +655,86 @@
            (handler-case (funcall ,thunk)
              (error (,err) (die ,err)))))))
 
-(defun run/fast (filename)
+
+(defun run/reader% (fastq-filename)
+  (with-exit-during-noninteractive-mode
+    (flet ((run% (stream)
+             (map-fastq (lambda (fastq-read)
+                          (lparallel.queue:push-queue fastq-read *input-queue*))
+                        stream)))
+      (if (string= fastq-filename "-")
+        (run% *standard-input*)
+        (with-open-file (input-stream fastq-filename :direction :input :element-type 'u8)
+          (run% input-stream))))
+    (setf *input-done* t)))
+
+(defun run/writer% ()
+  (let ((bed-stream (when *alignments*
+                      (open (format nil "~A/foldbacks.bed" *output-directory*)
+                            :direction :output
+                            :if-exists :supersede))))
+    (unwind-protect
+        (with-open-file (csv-stream (format nil "~A/foldbacks.csv" *output-directory*)
+                                    :direction :output
+                                    :if-exists :supersede)
+          (conserve:write-row (list "read-id" "is-foldback" "foldback-point") csv-stream)
+          (loop (multiple-value-bind (result found)
+                    (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
+                  (cond ((and (not found) *work-done*) (return))
+                        (found (progn
+                                 (write-csv-result result csv-stream)
+                                 (when bed-stream
+                                   (write-bed-result result bed-stream))))
+                        (t (progn))))))
+      (when bed-stream
+        (close bed-stream)))))
+
+(defun run/worker% ()
+  (with-exit-during-noninteractive-mode
+    (loop (multiple-value-bind (fastq-read found)
+              (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
+            (cond ((and (not found) *input-done*) (return))
+                  (found (let ((id (parse-read-id (id fastq-read))))
+                           (lparallel.queue:push-queue id *progress-queue*)
+                           (lparallel.queue:push-queue
+                             (run-read id (seq fastq-read) :optimized t)
+                             *output-queue*)))
+                  (t (progn)))))
+    (setf *work-done* t)))
+
+(defun run/progress% ()
+  (with-exit-during-noninteractive-mode
+    (loop (multiple-value-bind (update found)
+                    (lparallel.queue:try-pop-queue *progress-queue* :timeout 1)
+                  (cond ((and (not found) *work-done*) (return))
+                        (found (format *debug-io* "Processing: ~A~%" update))
+                        (t (progn)))))))
+
+(defun run/fast (filename &key alignments)
   ;; Set up status variables.
   (setf *input-done* nil *work-done* nil)
 
   ;; Make sure the output directory exists.
   (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
 
+  ;; Parse alignment file if given.
+  (when alignments
+    (setf *alignments* (parse-alignment-file alignments)))
+
   ;; Spawn single reader thread.
-  (do-thread "Minimera FASTQ Reader"
-    (with-exit-during-noninteractive-mode
-      (flet ((run% (stream)
-               (map-fastq (lambda (fastq-read)
-                            (lparallel.queue:push-queue fastq-read *input-queue*))
-                          stream)))
-        (if (string= filename "-")
-          (run% *standard-input*)
-          (with-open-file (input-stream filename :direction :input :element-type 'u8)
-            (run% input-stream))))
-      (setf *input-done* t)))
+  (bt2:make-thread (lambda () (run/reader% filename)) :name "Minimera FASTQ Reader")
 
   ;; Spawn N worker threads.
   (dotimes (i *worker-threads*)
-    (do-thread (format nil "Minimera Worker ~D" (1+ i))
-      (with-exit-during-noninteractive-mode
-        (loop (multiple-value-bind (fastq-read found)
-                  (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
-                (cond ((and (not found) *input-done*) (return))
-                      (found (lparallel.queue:push-queue
-                               (run-read (parse-read-id (id fastq-read))
-                                         (seq fastq-read) :optimized t)
-                               *output-queue*))
-                      (t (progn)))))
-        (setf *work-done* t))))
+    (bt2:make-thread (lambda () (run/worker%)) :name (format nil "Minimera Worker ~D" (1+ i))))
+
+  ;; Spawn single progress thread.
+  (bt2:make-thread (lambda () (run/progress%)) :name "Minimera Progress Reporter")
 
   ;; Spawn a single writer thread, and join it to wait for things to finish.
   (bt2:join-thread
-    (do-thread "Minimera Output Writer"
-      (with-open-file (output-stream (format nil "~A/foldbacks.csv" *output-directory*) :direction :output :if-exists :supersede)
-        (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
-        (loop (multiple-value-bind (out found)
-                  (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
-                (cond ((and (not found) *work-done*) (return))
-                      (found (conserve:write-row out output-stream))
-                      (t (progn)))))))))
+    (bt2:make-thread (lambda () (run/writer%)) :name "Minimera Output Writer")))
 
 
-;;;; UI -----------------------------------------------------------------------
-(adopt:define-string *documentation*
-  "Minimera is a tool for detecting foldback chimeric reads in Oxford Nanopore ~
-   data using minimizers.~@
-   ~@
-   Reads will be read from the specified fastq file (or stdin if - is given) and ~
-   the results written to foldbacks.csv inside the specified output directory.  ~
-   If plots are generated they will be inside a plots/ subdirectory of the ~
-   output directory.")
-
-(defparameter *o/help*
-  (adopt:make-option 'help
-    :help "Display help and exit."
-    :long "help"
-    :short #\h
-    :reduce (constantly t)))
-
-(defparameter *o/threads*
-  (adopt:make-option 'threads
-    :help "Number of worker threads to spawn. Does not include the reader and writer threads (default: 1)."
-    :long "threads"
-    :short #\j
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 1
-    :key #'parse-integer))
-
-(defparameter *o/output-directory*
-  (adopt:make-option 'output-directory
-    :help "Output directory (required)."
-    :long "output"
-    :short #\o
-    :parameter "PATH"
-    :reduce #'adopt:last))
-
-(defparameter *o/k*
-  (adopt:make-option 'k
-    :help "Size of kmers (in base pairs) to use for minimizers (default: 8)."
-    :long "kmer-size"
-    :short #\K
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 8
-    :key #'parse-integer))
-
-(defparameter *o/w*
-  (adopt:make-option 'w
-    :help "Size (total) of windows (in base pairs) to use for minimizer sketches (default: 16)."
-    :long "window-size"
-    :short #\W
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 16
-    :key #'parse-integer))
-
-(defparameter *o/foldback-position-epsilon*
-  (adopt:make-option 'foldback-position-epsilon
-    :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 50)."
-    :long "foldback-position-epsilon"
-    :short #\F
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 50
-    :key #'parse-integer))
-
-(defparameter *o/intercept-epsilon*
-  (adopt:make-option 'intercept-epsilon
-    :help "Epsilon (in y-intercept space) used to cluster colinear points during the initial clustering step (default: 30)."
-    :long "intercept-epsilon"
-    :short #\I
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 30
-    :key #'parse-integer))
-
-(defparameter *o/gap-epsilon*
-  (adopt:make-option 'gap-epsilon
-    :help "Maximum width (in y-intercept space) of an allowable gap in a cluster.  Gaps wider than this will result in splitting the cluster (default: 300)."
-    :long "gap-epsilon"
-    :short #\G
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 300
-    :key #'parse-integer))
-
-(defparameter *o/minimum-cluster-length*
-  (adopt:make-option 'minimum-cluster-length
-    :help "Minimum number of allowable points in a cluster.  Clusters with fewer than this many hits will be removed (default: 40)."
-    :long "minimum-cluster-length"
-    :short #\C
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 40
-    :key #'parse-integer))
-
-(defparameter *o/minimum-foldback-length-absolute*
-  (adopt:make-option 'minimum-foldback-length-absolute
-    :help "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded (default: 50)."
-    :long "minimum-foldback-length-absolute"
-    :short #\A
-    :parameter "N"
-    :reduce #'adopt:last
-    :initial-value 50
-    :key #'parse-integer))
-
-(defparameter *o/minimum-foldback-length-relative*
-  (adopt:make-option 'minimum-foldback-length-relative
-    :help "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded (default: 0.05)."
-    :long "minimum-foldback-length-relative"
-    :short #\R
-    :parameter "X"
-    :reduce #'adopt:last
-    :initial-value 0.05
-    :key #'parse-float:parse-float))
-
-(adopt:defparameters (*o/plot/foldbacks* *o/plot/no-foldbacks*)
-  (adopt:make-boolean-options 'plot-foldbacks
-    :long "plot-foldbacks"
-    :help "Generate plots for all reads determined to be foldbacks."
-    :help-no "Do not generate plots for reads determined to be foldbacks (the default)."))
-
-(adopt:defparameters (*o/plot/normal* *o/plot/no-normal*)
-  (adopt:make-boolean-options 'plot-normal
-    :long "plot-normal"
-    :help "Generate plots for all reads determined to be normal."
-    :help-no "Do not generate plots for reads determined to be normal (the default)."))
-
-(defparameter *ui*
-  (adopt:make-interface
-    :name "minimera"
-    :usage "[OPTIONS] --output PATH FASTQ"
-    :summary "detect foldback chimeric reads using minimizers"
-    :help *documentation*
-    :contents
-    (list *o/help*
-          *o/threads*
-          *o/output-directory*
-          (adopt:make-group 'algorithm
-            :title "Algorithm Options"
-            :options (list *o/k*
-                           *o/w*
-                           *o/foldback-position-epsilon*
-                           *o/intercept-epsilon*
-                           *o/gap-epsilon*
-                           *o/minimum-cluster-length*
-                           *o/minimum-foldback-length-absolute*
-                           *o/minimum-foldback-length-relative*))
-          (adopt:make-group 'plotting
-            :title "Plotting Options"
-            :help "Minimera can optionally generate plots of the minimizers for reads.  This requires Rscript and Tidyverse libraries to be installed.  Generating these plots is very slow, but they can be useful to debug edge cases."
-            :options (list *o/plot/foldbacks*
-                           *o/plot/no-foldbacks*
-                           *o/plot/normal*
-                           *o/plot/no-normal*)))))
 
 
-(defun toplevel ()
-  (adopt::quit-on-ctrl-c ()
-    (multiple-value-bind (arguments options) (adopt:parse-options-or-exit *ui*)
-      (when (gethash 'help options)
-        (adopt:print-help-and-exit *ui*))
-      (setf
-        *interactive* nil
-        *worker-threads* (gethash 'threads options)
-        *k* (gethash 'k options)
-        *w* (gethash 'w options)
-        *foldback-position-epsilon* (gethash 'foldback-position-epsilon options)
-        *intercept-epsilon* (gethash 'intercept-epsilon options)
-        *gap-epsilon* (gethash 'gap-epsilon options)
-        *minimum-cluster-length* (gethash 'minimum-cluster-length options)
-        *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
-        *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
-        *plot-foldbacks* (gethash 'plot-foldbacks options)
-        *plot-normal* (gethash 'plot-normal options)
-        *output-directory* (gethash 'output-directory options))
-      (handler-case
-          (progn
-            (assert *output-directory* () "Output directory must be specified.")
-            (assert (= 1 (length arguments)) () "Exactly one .fastq file must be specified.")
-            (assert (<= 1 *w* 31) () "Invalid window size ~A, must be in the range [1, 31]." *w*)
-            (assert (<= 1 *k* 30) () "Invalid kmer size ~A, must be in the range [1, 30]." *k*)
-            (assert (> *w* *k*) () "Window size (~A) must be larger than kmer size (~A)." *w* *k*)
-            (assert (plusp *foldback-position-epsilon*) ()
-              "Foldback position epsilon (~A) must be positive." *foldback-position-epsilon*)
-            (assert (plusp *intercept-epsilon*) ()
-              "Intercept epsilon (~A) must be positive." *intercept-epsilon*)
-            (assert (plusp *gap-epsilon*) ()
-              "Gap epsilon (~A) must be positive." *gap-epsilon*)
-            (assert (plusp *minimum-cluster-length*) ()
-              "Minimum cluster length (~A) must be positive." *minimum-cluster-length*)
-            (assert (plusp *minimum-foldback-length-absolute*) ()
-              "Minimum foldback length (absolute) (~A) must be positive." *minimum-foldback-length-absolute*)
-            (assert (<= 0.0 *minimum-foldback-length-relative* 1.0) ()
-              "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
-            (run/fast (first arguments)))
-        (error (e)
-               (adopt:print-error-and-exit e))))))

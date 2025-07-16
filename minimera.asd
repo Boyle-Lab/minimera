@@ -12,6 +12,8 @@
   :serial t
   :components ((:module "src" :serial t
                 :components ((:file "package")
-                             (:file "main")))))
+                             (:file "fastq")
+                             (:file "main")
+                             (:file "ui")))))
 
 
