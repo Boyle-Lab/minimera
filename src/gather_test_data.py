@@ -26,20 +26,20 @@ RC = str.maketrans('ACGT', 'TGCA')
 def reverse_complement(seq):
     return seq.translate(RC)[::-1]
 
-def write_output(output_file, r, classification):
+def write_output(output_fastq, output_csv, r, classification):
     seq = r.query_sequence
     qualities = ''.join(bs.core.offset_qual(r.query_qualities))
-    pos, rev = compute_raw_position(r)
-    contig = r.reference_name
 
     if r.is_reverse:
         seq = reverse_complement(seq)
         qualities = qualities[::-1]
 
-    print(f'@{r.read_name},{classification},{contig}:{pos},{rev}', file=output_file)
-    print(f'{seq}',       file=output_file)
-    print(f'+',           file=output_file)
-    print(f'{qualities}', file=output_file, flush=True)
+    print(f'@{r.read_name}', file=output_file)
+    print(f'{seq}',          file=output_file)
+    print(f'+',              file=output_file)
+    print(f'{qualities}',    file=output_file, flush=True)
+
+    print(f'{r.read_name},{classification}', file=output_csv, flush=True)
 
 
 def compute_igv_position(r):
@@ -53,25 +53,6 @@ def compute_igv_position(r):
         end = r.reference_end - r.query_length
 
     return contig, start, start + r.query_length
-
-def compute_raw_position(r):
-    reverse = r.is_reverse
-    cigar = bs.utils.parse_cigar(r.cigarstring)
-
-    if reverse:
-        pos = r.reference_end
-
-        (ctag, _), clen = cigar[-1]
-        if ctag == 'BAM_CSOFT_CLIP':
-            pos += clen
-    else:
-        pos = r.reference_start
-
-        (ctag, _), clen = cigar[0]
-        if ctag == 'BAM_CSOFT_CLIP':
-            pos -= clen
-
-    return pos, reverse
 
 def read_input():
     while True:
@@ -94,7 +75,7 @@ def should_check(r):
         not r.is_unmapped
         and not r.is_supplementary
         and not r.is_secondary
-        and r.mapping_quality > 30
+        and r.mapping_quality >= 10
     )
 
 def read_queue(input_queue):
@@ -109,29 +90,30 @@ def read_queue(input_queue):
         random.shuffle(q)
         return q
 
-def run(input_bam, input_queue, output_fastq):
-    q = read_queue(input_queue)
+def run(input_bam_path, input_queue_path, output_csv_path, output_fastq_path):
+    q = read_queue(input_queue_path)
 
-    with open(output_fastq, 'w') as output_file:
-        with bs.AlignmentFile(input_bam, 'rb') as bam:
-            for i, target in enumerate(q):
-                rs = bam.fetch(target[1], target[2]-1, target[2]+1)
-                for r in rs:
-                    if r.read_name == target[0]:
-                        if should_check(r):
-                            print('.', flush=True, end='')
-                            # contig, start, end = compute_igv_position(r)
-                            # igv_go(r.read_name, contig, start, end)
+    with open(output_csv_path, 'w') as output_csv:
+        with open(output_fastq_path, 'w') as output_fastq:
+            with bs.AlignmentFile(input_bam_path, 'rb') as bam:
+                for i, target in enumerate(q):
+                    rs = bam.fetch(target[1], target[2]-1, target[2]+1)
+                    for r in rs:
+                        if r.read_name == target[0]:
+                            if should_check(r):
+                                print('.', flush=True, end='')
+                                contig, start, end = compute_igv_position(r)
+                                igv_go(r.read_name, contig, start, end)
 
-                            classification = 'unknown'
-                            # classification = read_input()
-                            if classification is None:
-                                return
-                            elif classification == 'skip':
-                                continue
-                            else:
-                                write_output(output_file, r, classification)
+                                classification = read_input()
+                                if classification is None:
+                                    return
+                                elif classification == 'skip':
+                                    continue
+                                else:
+                                    write_output(output_fastq, output_csv, r, classification)
 
 
 if __name__ == '__main__':
-    run(sys.argv[1], sys.argv[2], sys.argv[3])
+    (_, input_bam_path, input_queue_path, output_csv_path, output_fastq_path) = sys.argv
+    run(input_bam_path, input_queue_path, output_csv_path, output_fastq_path)
