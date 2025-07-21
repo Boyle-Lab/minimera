@@ -123,6 +123,16 @@
     :initial-value 0.05
     :key #'parse-float:parse-float))
 
+(defparameter *o/monotony-threshold*
+  (adopt:make-option 'monotony-threshold
+    :help "Monotony score above which reads will be classified as monotonous and not analyzed for foldback finding (default: 0.80)."
+    :long "monotony-threshold"
+    :short #\M
+    :parameter "X"
+    :reduce #'adopt:last
+    :initial-value 0.80
+    :key #'parse-float:parse-float))
+
 (adopt:defparameters (*o/plot/foldbacks* *o/plot/no-foldbacks*)
   (adopt:make-boolean-options 'plot-foldbacks
     :long "plot-foldbacks"
@@ -154,7 +164,8 @@
                            *o/gap-epsilon*
                            *o/minimum-cluster-length*
                            *o/minimum-foldback-length-absolute*
-                           *o/minimum-foldback-length-relative*))
+                           *o/minimum-foldback-length-relative*
+                           *o/monotony-threshold*))
           (adopt:make-group 'plotting
             :title "Plotting Options"
             :help "Minimera can optionally generate plots of the minimizers for reads.  This requires Rscript and Tidyverse libraries to be installed.  Generating these plots is very slow, but they can be useful to debug edge cases."
@@ -184,6 +195,7 @@
         *minimum-cluster-length* (gethash 'minimum-cluster-length options)
         *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
+        *monotony-threshold* (gethash 'monotony-threshold options)
         *plot-foldbacks* (gethash 'plot-foldbacks options)
         *plot-normal* (gethash 'plot-normal options)
         *output-directory* (gethash 'output-directory options))
@@ -206,6 +218,8 @@
               "Minimum foldback length (absolute) (~A) must be positive." *minimum-foldback-length-absolute*)
             (assert (<= 0.0 *minimum-foldback-length-relative* 1.0) ()
               "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
+            (assert (<= 0.0 *monotony-threshold* 1.0) ()
+              "Monotony threshold (~A) must be in the range [0, 1]." *monotony-threshold*)
             (run/fast (first arguments) :alignments (gethash 'alignments options)))
         (error (e)
                (adopt:print-error-and-exit e))))))

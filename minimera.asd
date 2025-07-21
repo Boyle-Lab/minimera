@@ -13,6 +13,8 @@
   :components ((:module "src" :serial t
                 :components ((:file "package")
                              (:file "fastq")
+                             (:file "hash")
+                             (:file "patience")
                              (:file "main")
                              (:file "ui")))))
 

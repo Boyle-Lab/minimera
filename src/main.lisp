@@ -11,6 +11,7 @@
 (defparameter *minimum-foldback-length-absolute* 50)
 (defparameter *minimum-foldback-length-relative* 0.05)
 
+(defparameter *monotony-threshold* 0.80)
 
 (defparameter *plot-foldbacks* nil
   "Whether to generate plots (with the accompanying R script) of reads determined to be foldbacks.")
@@ -24,143 +25,7 @@
 (defparameter *output-directory* "results")
 
 
-;;;; Longest Increasing Subsequence -------------------------------------------
-
-;;; Based on Rosetta code, cleaned up and extended to allow :key function:
-;;;
-;;; https://rosettacode.org/wiki/Longest_increasing_subsequence#Common_Lisp:_Using_the_Patience_Sort_approach
-
-(defun patience-insert (item piles &key key)
-  ;; piles is an array that will be mutated.  each pile is ((item . backpointer)
-  ;; …) where backpointer points at the previous element (and this conveniently
-  ;; happens to resemble vanilla list structure).
-  (loop :for pile :across piles
-        :and prev = nil :then pile
-        :for i from 0
-        :for top = (car pile)
-        :do (when (<= (funcall key item)
-                      (funcall key (car top)))
-              (push (cons item (car prev)) (aref piles i))
-              (return))
-        :finally (vector-push-extend (list (cons item top)) piles)))
-
-(defun longest-increasing-subsequence (sequence &key (key #'identity) (result-type 'list))
-  "Return the longest increasing subsequence of elements from `sequence`.
-
-  Elements will be compared with `<`.  `key` will be called on each first.
-
-  The result will be a sequence of type `result-type`.
-
-  "
-  (let ((piles (make-array 256 :adjustable t :fill-pointer 0)))
-    (map nil (lambda (item) (patience-insert item piles :key key)) sequence)
-    (nreverse (coerce (car (aref piles (1- (length piles)))) result-type))))
-
-
-;;;; Hashing ------------------------------------------------------------------
-
-;;; https://naml.us/post/inverse-of-a-hash-function/
-
-(deftype u64 ()
-  `(integer 0 ,(1- (expt 2 64))))
-
-(defun-inline wrap64 (n)
-  (mod n (expt 2 64)))
-
-(defun-inline shl (x bits)
-  (logand (ash x bits)
-          (1- (ash 1 64))))
-
-(defun-inline shr (x bits)
-  (logand (ash x (- bits))
-          (1- (ash 1 64))))
-
-(defun-inline hash64 (n)
-  (declare (optimize (speed 3) (safety 1) (debug 1)))
-  (etypecase n
-    (fixnum
-      (_ n
-        (wrap64 (+ (lognot _) (shl _ 21)))
-        (wrap64 (logxor _ (shr _ 24)))
-        (wrap64 (+ (+ _ (shl _ 3))
-                   (shl _ 8)))
-        (wrap64 (logxor _ (shr _ 14)))
-        (wrap64 (+ (+ _ (shl _ 2))
-                   (shl _ 4)))
-        (wrap64 (logxor _ (shr _ 28)))
-        (wrap64 (+ _ (shl _ 31)))))))
-
-(defun ihash64 (n)
-  (declare (optimize (speed 3) (safety 1) (debug 1)))
-  ;;; https://naml.us/post/inverse-of-a-hash-function/
-  (etypecase n
-    (fixnum
-      (let* ((key n)
-
-             ;;   // Invert key = key + (key << 31)
-             ;;   tmp = key - (key <<31);
-             ;;   key = key - (tmp <<31);
-             (tmp (wrap64 (- key (shl key 31))))
-             (key (wrap64 (- key (shl tmp 31))))
-
-             ;;   // Invert key = key ^ (key >> 28)
-             ;;   tmp = key ^ key >>28;
-             ;;   key = key ^ tmp >>28;
-             (tmp (wrap64 (logxor key (shr key 28))))
-             (key (wrap64 (logxor key (shr tmp 28))))
-
-             ;;   // Invert key *= 21
-             ;;   key *= 14933078535860113213u;
-             (key (wrap64 (* key 14933078535860113213)))
-
-             ;;   // Invert key = key ^ (key >> 14)
-             ;;   tmp = key ^ key >> 14;
-             ;;   tmp = key ^ tmp >> 14;
-             ;;   tmp = key ^ tmp >> 14;
-             ;;   key = key ^ tmp >> 14;
-             (tmp (wrap64 (logxor key (shr key 14))))
-             (tmp (wrap64 (logxor key (shr tmp 14))))
-             (tmp (wrap64 (logxor key (shr tmp 14))))
-             (key (wrap64 (logxor key (shr tmp 14))))
-
-             ;;   // Invert key *= 265
-             ;;   key *= 15244667743933553977u;
-             (key (wrap64 (* key 15244667743933553977)))
-
-             ;;   // Invert key = key ^ (key >> 24)
-             ;;   tmp = key ^ key >> 24;
-             ;;   key = key ^ tmp >> 24;
-             (tmp (wrap64 (logxor key (shr key 24))))
-             (key (wrap64 (logxor key (shr tmp 24))))
-
-             ;;   // Invert key = (~key) + (key << 21)
-             ;;   tmp = ~key;
-             ;;   tmp = ~( key -( tmp <<21));
-             ;;   tmp = ~( key -( tmp <<21));
-             ;;   key = ~( key -( tmp <<21));
-             (tmp (wrap64 (lognot key)))
-             (tmp (wrap64 (lognot (- key (shl tmp 21)))))
-             (tmp (wrap64 (lognot (- key (shl tmp 21)))))
-             (key (wrap64 (lognot (- key (shl tmp 21))))))
-        key))))
-
-(defun phihash-string (string &key (start 0) (end (length string)))
-  "Return the φ-hash of the subsequence of `string` bounded by `start` and `end`."
-  (iterate
-    (with hash = 0)
-    (for ch :in-string string :from start :below end)
-    (zapf hash (_ %
-                 (ash _ 2)
-                 (logior _ (ecase ch
-                             (#\A #b00)
-                             (#\C #b01)
-                             (#\G #b10)
-                             (#\T #b11)))))
-    (returning (hash64 hash))))
-
-(defun-inline phihash-chunk (chunk)
-  (hash64 chunk))
-
+(defparameter *report-progress* nil)
 
 ;;;; Minimizers ---------------------------------------------------------------
 (declaim (inline make-minmimizer))
@@ -314,6 +179,19 @@
                   :collect (cons (hash m) (pos m)))
             (loop :for m in (minimizers/fast k w bytes)
                   :collect (cons (hash m) (pos m))))))
+
+
+;;;; Monotony -----------------------------------------------------------------
+(defun estimate-monotony (minimizers)
+  (_ minimizers
+    (proportions _ :key #'hash)
+    ;; TODO make a version of this supporting :result-type 'vector
+    (alexandria:hash-table-values _)
+    (coerce _ 'vector)
+    (sort _ #'>)
+    ;; Sum the proportions of the top 0.1% of minimizers.
+    (take (max (truncate (length minimizers) 1000) 2) _)
+    summation))
 
 
 ;;;; Minimizer Hits/Matches ---------------------------------------------------
@@ -559,49 +437,55 @@
 
 
 ;;;; Main Entry Point ---------------------------------------------------------
+(defun compute-foldback-position (cluster)
+  (multiple-value-bind (start end) (cluster-bounds cluster)
+    (truncate (+ start end) 2)))
+
+
 (defun find-foldback (id sequence &key (optimized nil))
   (if optimized
     (check-type sequence a8)
     (check-type sequence string))
   (let* ((read-length (length sequence))
-         (hits (if optimized
-                 (hits (minimizers/fast *k* *w* sequence)
-                       (minimizers/fast *k* *w* (nreverse-complement-bytes sequence)))
-                 (hits (minimizers *k* *w* sequence)
-                       (minimizers *k* *w* (reverse-complement sequence)))))
-         (clusters (cluster hits))
-         (results (find-foldback-clusters read-length clusters))
-         (result (alexandria:extremum results #'> :key #'cluster-lengths)))
-    (if results
-      (when *plot-foldbacks* (plot-minimizers id sequence hits clusters))
-      (when *plot-normal*    (plot-minimizers id sequence hits clusters)))
-    result))
-
+         (m1 (if optimized
+               (minimizers/fast *k* *w* sequence)
+               (minimizers *k* *w* sequence)))
+         (monotony (estimate-monotony m1)))
+    (if (>= monotony *monotony-threshold*)
+      (list id read-length :monotonous monotony nil)
+      (let* ((m2 (if optimized
+                   (minimizers/fast *k* *w* (nreverse-complement-bytes sequence))
+                   (minimizers *k* *w* (reverse-complement sequence))))
+             (hits (hits m1 m2))
+             (clusters (cluster hits))
+             (results (find-foldback-clusters read-length clusters))
+             (result (alexandria:extremum results #'> :key #'cluster-lengths)))
+        (if results
+          (when *plot-foldbacks* (plot-minimizers id sequence hits clusters))
+          (when *plot-normal*    (plot-minimizers id sequence hits clusters)))
+        (if result
+          (list id read-length :foldback monotony (compute-foldback-position result))
+          (list id read-length :normal monotony nil))))))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
-(defun compute-foldback-position (cluster)
-  (multiple-value-bind (start end) (cluster-bounds cluster)
-    (truncate (+ start end) 2)))
-
-(defun run-read (id sequence &key optimized)
-  (let ((candidate (find-foldback id sequence :optimized optimized)))
-    (if candidate
-      (list id t (compute-foldback-position candidate))
-      (list id nil nil))))
+(defparameter *csv-headers* (list "read-id" "read-length" "classification" "monotony" "foldback-point"))
 
 (defun write-csv-result (result stream)
-  (destructuring-bind (id is-foldback foldback-point) result
+  (destructuring-bind (id read-length class monotony foldback-point) result
     (conserve:write-row (list id
-                              (if is-foldback "true" "false")
+                              (princ-to-string read-length)
+                              (string-downcase class)
+                              (format nil "~,4F" monotony)
                               (if foldback-point
                                 (princ-to-string foldback-point)
                                 ""))
                         stream)))
 
 (defun write-bed-result (result stream)
-  (destructuring-bind (id is-foldback foldback-point) result
-    (when is-foldback
+  (destructuring-bind (id read-length class monotony foldback-point) result
+    (declare (ignore read-length class monotony))
+    (when foldback-point
       (when-let ((alignment-info (gethash id *alignments*)))
         (destructuring-bind (contig pos is-rev cigar) alignment-info
           (let ((conserve:*delimiter* #\tab)
@@ -616,9 +500,9 @@
 (defun run/slow (filename)
   (with-open-file (input-stream filename :direction :input)
     (with-open-file (output-stream (format nil "~A.csv" *output-directory*) :direction :output :if-exists :supersede)
-      (conserve:write-row (list "read-id" "is-foldback" "foldback-point") output-stream)
+      (conserve:write-row *csv-headers* output-stream)
       (do-fastq (lambda (id seq)
-                  (write-csv-result (run-read id seq :optimized nil) output-stream))
+                  (write-csv-result (find-foldback id seq :optimized nil) output-stream))
                 input-stream))))
 
 
@@ -633,7 +517,7 @@
 
 (defun parse-read-id (bytes)
   ;; TODO: Remove or document the comma splitting here.
-  (first (str:split " " (first (str:split "," (map 'string #'code-char bytes)
+  (first (str:split #\tab (first (str:split "," (map 'string #'code-char bytes)
                                           :limit 2))
                     :limit 2)))
 
@@ -677,7 +561,7 @@
         (with-open-file (csv-stream (format nil "~A/foldbacks.csv" *output-directory*)
                                     :direction :output
                                     :if-exists :supersede)
-          (conserve:write-row (list "read-id" "is-foldback" "foldback-point") csv-stream)
+          (conserve:write-row *csv-headers* csv-stream)
           (loop (multiple-value-bind (result found)
                     (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
                   (cond ((and (not found) *work-done*) (return))
@@ -697,7 +581,7 @@
                   (found (let ((id (parse-read-id (id fastq-read))))
                            (lparallel.queue:push-queue id *progress-queue*)
                            (lparallel.queue:push-queue
-                             (run-read id (seq fastq-read) :optimized t)
+                             (find-foldback id (seq fastq-read) :optimized t)
                              *output-queue*)))
                   (t (progn)))))
     (setf *work-done* t)))
@@ -705,36 +589,59 @@
 (defun run/progress% ()
   (with-exit-during-noninteractive-mode
     (loop (multiple-value-bind (update found)
-                    (lparallel.queue:try-pop-queue *progress-queue* :timeout 1)
-                  (cond ((and (not found) *work-done*) (return))
-                        (found (format *debug-io* "Processing: ~A~%" update))
-                        (t (progn)))))))
+              (lparallel.queue:try-pop-queue *progress-queue* :timeout 1)
+            (cond ((and (not found) *work-done*) (return))
+                  (found (when *report-progress*
+                           (format *debug-io* "Processing: ~A~%" update)))
+                  (t (progn)))))))
 
 (defun run/fast (filename &key alignments)
-  ;; Set up status variables.
   (setf *input-done* nil *work-done* nil)
-
-  ;; Make sure the output directory exists.
   (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
-
-  ;; Parse alignment file if given.
   (when alignments
     (setf *alignments* (parse-alignment-file alignments)))
-
   ;; Spawn single reader thread.
   (bt2:make-thread (lambda () (run/reader% filename)) :name "Minimera FASTQ Reader")
-
   ;; Spawn N worker threads.
   (dotimes (i *worker-threads*)
     (bt2:make-thread (lambda () (run/worker%)) :name (format nil "Minimera Worker ~D" (1+ i))))
-
   ;; Spawn single progress thread.
   (bt2:make-thread (lambda () (run/progress%)) :name "Minimera Progress Reporter")
-
   ;; Spawn a single writer thread, and join it to wait for things to finish.
   (bt2:join-thread
     (bt2:make-thread (lambda () (run/writer%)) :name "Minimera Output Writer")))
 
+#; Scratch --------------------------------------------------------------------
 
+(defparameter *r* nil)
 
+(with-open-file (f "data/hallucination.fastq" :element-type 'u8)
+  (map-fastq (lambda (x) (setf *r* x)) f))
+
+(doseq (m (minimizers/fast 8 15 (seq *r*)))
+  (print m))
+
+(_ (seq *r*)
+  (minimizers/fast 8 15 _)
+  (mapcar #'hash _)
+  proportions
+  alexandria:hash-table-alist
+  (sort _ #'> :key #'cdr)
+  (take 10 _)
+  )
+
+(_ (seq *r*)
+  (minimizers/fast 8 15 _)
+  (mapcar #'hash _)
+  frequencies
+  alexandria:hash-table-alist
+  (sort _ #'> :key #'cdr)
+  (take 10 _)
+  )
+
+(_ (seq *r*)
+  (minimizers/fast 8 15 _)
+  length
+  (truncate _ 1000)
+  )
 
