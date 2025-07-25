@@ -34,10 +34,10 @@ def write_output(output_fastq, output_csv, r, classification):
         seq = reverse_complement(seq)
         qualities = qualities[::-1]
 
-    print(f'@{r.read_name}', file=output_file)
-    print(f'{seq}',          file=output_file)
-    print(f'+',              file=output_file)
-    print(f'{qualities}',    file=output_file, flush=True)
+    print(f'@{r.read_name}', file=output_fastq)
+    print(f'{seq}',          file=output_fastq)
+    print(f'+',              file=output_fastq)
+    print(f'{qualities}',    file=output_fastq, flush=True)
 
     print(f'{r.read_name},{classification}', file=output_csv, flush=True)
 
@@ -70,13 +70,40 @@ def read_input():
         elif s == 's':
             return 'skip'
 
+def is_clip(cigar, threshold):
+    (ctag, _), clen = cigar
+    return ctag == 'BAM_CSOFT_CLIP' and clen >= threshold
+
+def read_has_some_soft_clip(r, threshold):
+    cigar = bs.utils.parse_cigar(r.cigarstring)
+
+    if len(cigar) > 0:
+        return is_clip(cigar[0], threshold) or is_clip(cigar[-1], threshold)
+    else:
+        return False
+
+# Reads with no clipping only have a 2.5% chance of getting through.
+SOFTCLIP_THRESHOLD = 40
+UNCLIPPED_PENALTY = 0.025
+
 def should_check(r):
-    return (
+    if (
         not r.is_unmapped
         and not r.is_supplementary
         and not r.is_secondary
         and r.mapping_quality >= 10
-    )
+    ):
+        if read_has_some_soft_clip(r, SOFTCLIP_THRESHOLD):
+            return True
+        else:
+            if random.random() < UNCLIPPED_PENALTY:
+                return True
+            else:
+                print('Skipping unclipped read.')
+                return False
+    else:
+        print('Skipping non-primary or low quality read.')
+        return False
 
 def read_queue(input_queue):
     # samtools view data/9b58328c3b631816942cbe400a807241935897e6.sorted.bam | f 1,3,4 | shuf > data/9b58328c3b631816942cbe400a807241935897e6.queue
@@ -92,6 +119,7 @@ def read_queue(input_queue):
 
 def run(input_bam_path, input_queue_path, output_csv_path, output_fastq_path):
     q = read_queue(input_queue_path)
+    n = 0
 
     with open(output_csv_path, 'w') as output_csv:
         with open(output_fastq_path, 'w') as output_fastq:
@@ -99,9 +127,11 @@ def run(input_bam_path, input_queue_path, output_csv_path, output_fastq_path):
                 for i, target in enumerate(q):
                     rs = bam.fetch(target[1], target[2]-1, target[2]+1)
                     for r in rs:
+                        print('.', flush=True, end='')
                         if r.read_name == target[0]:
                             if should_check(r):
-                                print('.', flush=True, end='')
+                                print('')
+                                # print('.', flush=True, end='')
                                 contig, start, end = compute_igv_position(r)
                                 igv_go(r.read_name, contig, start, end)
 
@@ -112,6 +142,8 @@ def run(input_bam_path, input_queue_path, output_csv_path, output_fastq_path):
                                     continue
                                 else:
                                     write_output(output_fastq, output_csv, r, classification)
+                                    n += 1
+                                    print(f'{n} recorded')
 
 
 if __name__ == '__main__':
