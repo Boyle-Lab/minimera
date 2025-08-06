@@ -25,7 +25,7 @@
 (defparameter *output-directory* "results")
 
 
-(defparameter *report-progress* nil)
+(defparameter *report-progress* t)
 
 ;;;; Minimizers ---------------------------------------------------------------
 (declaim (inline make-minmimizer))
@@ -350,11 +350,11 @@
 (defun choose-tics (sequence &aux (length (length sequence)))
   "Return an appropriate value for axis tics based on the length of `sequence`."
   (cond
-    ((< length   500)    50)
-    ((< length  1000)   100)
-    ((< length  5000)   500)
-    ((< length 10000)  1000)
-    ((< length 50000)  5000)
+    ((< length    500)    50)
+    ((< length   5000)   100)
+    ((< length  10000)   500)
+    ((< length  50000)  1000)
+    ((< length 100000)  5000)
     (t 10000)))
 
 (defun plot-minimizers (id sequence hits clusters)
@@ -378,6 +378,116 @@
              (choose-tics sequence)
              (princ-to-string p)
              (format nil "~A/plots/~A.png" *output-directory* id))))
+
+(defparameter *png-size*    512)
+
+(defun-inline cluster-color (cluster)
+  (case cluster
+    ((nil) (values #x00 #x00 #x00))
+    ;; https://brand.umich.edu/design-resources/colors/
+    (1 (values #x9A #x33 #x24))
+    (2 (values #x75 #x98 #x8d))
+    (3 (values #xA5 #xA5 #x08))
+    (4 (values #x00 #xB2 #xA9))
+    (5 (values #x70 #x20 #x82))
+    (6 (values #x9B #x9A #x6D))
+    (7 (values #xD8 #x60 #x18))
+    (8 (values #x57 #x52 #x94))
+    (t (values #x2F #x65 #xA7))))
+
+(defun render-minimizers (id sequence classification foldback-point hits clusters)
+  (assert (>= *png-size* 64))
+  (let* ((size *png-size*)
+         (png (make-instance 'zpng:png
+                :color-type :truecolor
+                :width size
+                :height size))
+         (img (zpng:data-array png))
+         (len (length sequence))
+         (idx (index-hits clusters))
+         (pad (truncate size 20))
+         (pp 1)
+         (s pad)
+         (e (- size pad))
+         (pixels-per-base (/ (- e s) len))
+         (tic-bases (choose-tics sequence))
+         (tic-width (truncate (* tic-bases pixels-per-base)))
+         (tic-length (truncate pad 3)))
+    (dotimes (i (array-total-size img))
+      (setf (row-major-aref img i) #xFF))
+    (labels ((base->x (base) (values (truncate (map-range 0 len s e base))))
+             (base->y (base) (values (truncate (map-range 0 len e s base))))
+             (hit-x (hit) (base->x (hit-l1 hit)))
+             (hit-y (hit) (base->y (hit-l2 hit)))
+             (ink (x y &optional (a #x30))
+               (dotimes (ch 3)
+                 (setf (aref img y x ch) (max 0 (- (aref img y x ch) a)))))
+             (draw (x y r &optional (g r) (b g))
+               (setf (aref img y x 0) r
+                     (aref img y x 1) g
+                     (aref img y x 2) b))
+             (draw-unclustered-point (x y)
+               (when (< len 20000)
+                 (ink (- x pp) y)
+                 (ink (+ x pp) y)
+                 (ink x (- y pp))
+                 (ink x (+ y pp)))
+               (ink x y #x50))
+             (draw-point (x y r &optional (g r) (b g))
+               (draw (- x pp) y r g b)
+               (draw (+ x pp) y r g b)
+               (draw x (- y pp) r g b)
+               (draw x (+ y pp) r g b)
+               (draw x y r g b))
+             (draw-char (x y char)
+               (let ((pixels (gethash char *m5x7*)))
+                 (assert pixels () "No glyph available for ~S" char)
+                 (destructuring-bind (width height) (array-dimensions pixels)
+                   (dotimes (dx width)
+                     (dotimes (dy height)
+                       (when (plusp (aref pixels dx dy))
+                         (draw (+ x dx) (+ y dy) #x00))))
+                   width)))
+             (draw-string (x y string)
+               (iterate
+                 (for char :in-string string)
+                 (for w = (draw-char x y char))
+                 (incf x (1+ w)))))
+      (draw-string 5 5 (format nil "Read ~A (~A)" id (string-downcase classification)))
+      (draw-string 5 (- size 10)
+                   (format nil "tics = ~:Dbp, read length = ~:D, ~A"
+                           tic-bases len
+                           (if foldback-point
+                             (format nil "foldback point = ~:D" foldback-point)
+                             "no foldback detected")))
+      (do-range ((x (1- s) e)) (draw x e #x66)) ; x axis
+      (do-range ((y s e)) (draw (1- s) y #x66)) ; y axis
+      (iterate (for tx :from (+ s tic-width) :to e :by tic-width) ; xticx
+               (loop :for ty :from (1+ e)
+                     :repeat tic-length
+                     :do (draw tx ty #x66)))
+      (iterate (for ty :from (- e tic-width) :downto s :by tic-width) ; ytics
+               (loop :for tx :downfrom (- s 2)
+                     :repeat tic-length
+                     :do (draw tx ty #x66)))
+      (when foldback-point ; draw dashed line at foldback point
+        (iterate (with x = (base->x foldback-point))
+                 (for y :from s :to e :by 4)
+                 (draw x y      #xBF #xB0 #x86)
+                 (draw x (1+ y) #xBF #xB0 #x86)))
+      (doseq (hit hits) ; unclustered hits
+        (let ((cluster (gethash hit idx)))
+          (unless cluster
+            (multiple-value-call #'draw-unclustered-point
+              (hit-y hit) (hit-x hit)))))
+      (doseq (hit hits) ; clustered hits
+        (let ((cluster (gethash hit idx)))
+          (when cluster
+            (multiple-value-call #'draw-point
+              (hit-y hit) (hit-x hit) (cluster-color cluster))))))
+    (ensure-directories-exist (format nil "~A/plots/" *output-directory*))
+    (zpng:write-png png (format nil "~A/plots/~A.png" *output-directory* id)
+                    :if-exists :supersede)))
 
 
 ;;;; Alignments ---------------------------------------------------------------
@@ -459,13 +569,14 @@
              (hits (hits m1 m2))
              (clusters (cluster hits))
              (results (find-foldback-clusters read-length clusters))
-             (result (alexandria:extremum results #'> :key #'cluster-lengths)))
-        (if results
-          (when *plot-foldbacks* (plot-minimizers id sequence hits clusters))
-          (when *plot-normal*    (plot-minimizers id sequence hits clusters)))
-        (if result
-          (list id read-length :foldback monotony (compute-foldback-position result))
-          (list id read-length :normal monotony nil))))))
+             (result (alexandria:extremum results #'> :key #'cluster-lengths))
+             (classification (if result :foldback :normal))
+             (foldback-position (when result
+                                  (compute-foldback-position result))))
+        (when (or (and results *plot-foldbacks*)
+                  (and (null results) *plot-normal*))
+          (render-minimizers id sequence classification foldback-position hits clusters))
+        (list id read-length classification monotony foldback-position)))))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
@@ -611,12 +722,42 @@
   (bt2:join-thread
     (bt2:make-thread (lambda () (run/writer%)) :name "Minimera Output Writer")))
 
+
+
+
+
 #; Scratch --------------------------------------------------------------------
 
-(defparameter *r* nil)
+(defparameter *rs* nil)
 
-(with-open-file (f "data/hallucination.fastq" :element-type 'u8)
-  (map-fastq (lambda (x) (setf *r* x)) f))
+(setf *output-directory* "results/repl")
+
+(with-open-file (f "data/bench/bulk.fastq" :element-type 'u8)
+  (setf *rs* (gathering-vector () (map-fastq #'gather f))))
+
+(mapcar #'car (last (take 200 (sort (enumerate *rs*) #'> :key (lambda (x) (length (seq (cdr x)))))) 10))
+
+(defparameter *r* (aref *rs* 709)) ; the longboi
+(defparameter *r* (aref *rs* 124))
+(pr (length (seq *r*)))
+
+;; (map 'string 'code-char (seq *r*))
+
+(progn
+  (defparameter *min/id* (minimizers/fast 8 15 (seq *r*)))
+  (defparameter *min/rc* (minimizers/fast 8 15 (reverse-complement-bytes (seq *r*))))
+  (defparameter *hits* (hits *min/id* *min/rc*))
+  (defparameter *clusters* (cluster *hits*)))
+
+
+(_ (index-hits *clusters*)
+  alexandria:hash-table-alist
+  (mapcar #'cdr _)
+  (frequencies _)
+  )
+
+(time (plot-minimizers "repltest-r" (seq *r*) *hits* *clusters*))
+(time (render-minimizers "repltest-lisp" (seq *r*) :unknown 5000 *hits* *clusters*))
 
 (doseq (m (minimizers/fast 8 15 (seq *r*)))
   (print m))
