@@ -145,6 +145,13 @@
     :help "Generate plots for all reads determined to be normal."
     :help-no "Do not generate plots for reads determined to be normal (the default)."))
 
+(adopt:defparameters (*o/progress* *o/no-progress*)
+  (adopt:make-boolean-options 'progress
+    :long "progress"
+    :help "Report progress as reads are classified (the default)."
+    :help-no "Do not report progress."
+    :initial-value t))
+
 (defparameter *ui*
   (adopt:make-interface
     :name "minimera"
@@ -154,6 +161,8 @@
     :contents
     (list *o/help*
           *o/threads*
+          *o/progress*
+          *o/no-progress*
           *o/output-directory*
           (adopt:make-group 'algorithm
             :title "Algorithm Options"
@@ -198,7 +207,8 @@
         *monotony-threshold* (gethash 'monotony-threshold options)
         *plot-foldbacks* (gethash 'plot-foldbacks options)
         *plot-normal* (gethash 'plot-normal options)
-        *output-directory* (gethash 'output-directory options))
+        *output-directory* (gethash 'output-directory options)
+        *report-progress* (gethash 'progress options))
       (handler-case
           (progn
             (assert *output-directory* () "Output directory must be specified.")
