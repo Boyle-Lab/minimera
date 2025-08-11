@@ -478,8 +478,7 @@
       (doseq (hit hits) ; unclustered hits
         (let ((cluster (gethash hit idx)))
           (unless cluster
-            (multiple-value-call #'draw-unclustered-point
-              (hit-y hit) (hit-x hit)))))
+            (draw-unclustered-point (hit-y hit) (hit-x hit)))))
       (doseq (hit hits) ; clustered hits
         (let ((cluster (gethash hit idx)))
           (when cluster
@@ -626,11 +625,17 @@
 (defparameter *progress-queue* (lparallel.queue:make-queue))
 
 
+(defun read-id-char-p (byte)
+  (or (<= (char-code #\a) byte (char-code #\z))
+      (<= (char-code #\A) byte (char-code #\Z))
+      (<= (char-code #\0) byte (char-code #\9))
+      (= byte (char-code #\-))
+      (= byte (char-code #\_))))
+
 (defun parse-read-id (bytes)
-  ;; TODO: Remove or document the comma splitting here.
-  (first (str:split #\tab (first (str:split "," (map 'string #'code-char bytes)
-                                          :limit 2))
-                    :limit 2)))
+  (_ bytes
+    (subseq _ 0 (position-if-not #'read-id-char-p _))
+    (map 'string #'code-char _)))
 
 
 (defun die (error)
