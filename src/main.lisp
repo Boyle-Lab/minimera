@@ -618,7 +618,10 @@
 
 (defparameter *interactive* t)
 (defparameter *input-done* nil)
-(defparameter *work-done*  nil)
+(defparameter *workers-running* nil)
+
+(defun-inline workers-finished-p ()
+  (zerop (bt2:atomic-integer-value *workers-running*)))
 
 (defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 2 *worker-threads*)))
 (defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 2 *worker-threads*)))
@@ -680,7 +683,7 @@
           (conserve:write-row *csv-headers* csv-stream)
           (loop (multiple-value-bind (result found)
                     (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
-                  (cond ((and (not found) *work-done*) (return))
+                  (cond ((and (not found) (workers-finished-p)) (return))
                         (found (progn
                                  (write-csv-result result csv-stream)
                                  (when bed-stream
@@ -700,19 +703,24 @@
                              (find-foldback id (seq fastq-read) :optimized t)
                              *output-queue*)))
                   (t (progn)))))
-    (setf *work-done* t)))
+    (bt2:atomic-integer-decf *workers-running*)))
 
 (defun run/progress% ()
   (with-exit-during-noninteractive-mode
-    (loop (multiple-value-bind (update found)
-              (lparallel.queue:try-pop-queue *progress-queue* :timeout 1)
-            (cond ((and (not found) *work-done*) (return))
-                  (found (when *report-progress*
-                           (format *debug-io* "Processing: ~A~%" update)))
-                  (t (progn)))))))
+    (let ((n 0))
+      (loop (multiple-value-bind (update found)
+                (lparallel.queue:try-pop-queue *progress-queue* :timeout 1)
+              (cond ((and (not found) (workers-finished-p))
+                     (return))
+                    (found (progn (when *report-progress*
+                                    (format *error-output* "Processing: ~A~%" update)
+                                    (force-output *error-output*))
+                                  (incf n)))
+                    (t (progn))))))))
 
 (defun run/fast (filename &key alignments)
-  (setf *input-done* nil *work-done* nil)
+  (setf *input-done* nil
+        *workers-running* (bt2:make-atomic-integer :value *worker-threads*))
   (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
   (when alignments
     (setf *alignments* (parse-alignment-file alignments)))
