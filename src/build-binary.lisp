@@ -10,7 +10,7 @@
     :executable t
     :compression t
     :toplevel #'minimera:toplevel
-    :save-runtime-options t))
+    :save-runtime-options :accept-runtime-options))
 
 #-sbcl
 (error "Only SBCL is supported.")
