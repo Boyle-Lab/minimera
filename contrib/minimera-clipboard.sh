@@ -3,7 +3,7 @@
 set -euo pipefail
 
 function fastq {
-    echo "@00000000-0000-0000-0000-000000000000"
+    echo "@scratch"
     pbpaste | head -n1
     echo
     echo "+"
@@ -15,9 +15,13 @@ function fastq {
 scratch="/home/sjl/scratch/minimera-clipboard-scratch"
 mkdir -p "$scratch"
 
+if test -f "$scratch"/plots/scratch.png; then
+    rm "$scratch"/plots/scratch.png
+fi
+
 minimera <(fastq) \
     --output "$scratch" \
     --plot-foldbacks \
     --plot-normal
 
-qimgv "$scratch"/plots/00000000-0000-0000-0000-000000000000.png
+qimgv "$scratch"/plots/scratch.png
