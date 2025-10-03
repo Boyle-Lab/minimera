@@ -277,10 +277,15 @@
       (for next-hit = (if (= i last-i)
                         nil
                         (aref hits next-i)))
+      ;; (for stop = (or (null next-hit)
+      ;;                 (> (hit-c next-hit) 500)))
       (when (or (null next-hit)
+                ;; stop
                 (> (- (hit-c next-hit) (hit-c hit)) epsilon))
         (collect (subseq hits start next-i) :into results)
         (setf start next-i))
+      ;; (when stop
+      ;;   (finish))
       (returning (filter-clusters results)))))
 
 
@@ -563,6 +568,7 @@
     (if (>= monotony *monotony-threshold*)
       (list id read-length :monotonous monotony nil)
       (let* ((m2 (if optimized
+                   ;; CAREFUL HERE, this nrev breaks using this function interactively
                    (minimizers/fast *k* *w* (nreverse-complement-bytes sequence))
                    (minimizers *k* *w* (reverse-complement sequence))))
              (hits (hits m1 m2))
@@ -734,68 +740,4 @@
   ;; Spawn a single writer thread, and join it to wait for things to finish.
   (bt2:join-thread
     (bt2:make-thread (lambda () (run/writer%)) :name "Minimera Output Writer")))
-
-
-
-
-
-#; Scratch --------------------------------------------------------------------
-
-(defparameter *rs* nil)
-
-(setf *output-directory* "results/repl")
-
-(with-open-file (f "data/bench/bulk.fastq" :element-type 'u8)
-  (setf *rs* (gathering-vector () (map-fastq #'gather f))))
-
-(mapcar #'car (last (take 200 (sort (enumerate *rs*) #'> :key (lambda (x) (length (seq (cdr x)))))) 10))
-
-(defparameter *r* (aref *rs* 709)) ; the longboi
-(defparameter *r* (aref *rs* 124))
-(pr (length (seq *r*)))
-
-;; (map 'string 'code-char (seq *r*))
-
-(progn
-  (defparameter *min/id* (minimizers/fast 8 15 (seq *r*)))
-  (defparameter *min/rc* (minimizers/fast 8 15 (reverse-complement-bytes (seq *r*))))
-  (defparameter *hits* (hits *min/id* *min/rc*))
-  (defparameter *clusters* (cluster *hits*)))
-
-
-(_ (index-hits *clusters*)
-  alexandria:hash-table-alist
-  (mapcar #'cdr _)
-  (frequencies _)
-  )
-
-(time (plot-minimizers "repltest-r" (seq *r*) *hits* *clusters*))
-(time (render-minimizers "repltest-lisp" (seq *r*) :unknown 5000 *hits* *clusters*))
-
-(doseq (m (minimizers/fast 8 15 (seq *r*)))
-  (print m))
-
-(_ (seq *r*)
-  (minimizers/fast 8 15 _)
-  (mapcar #'hash _)
-  proportions
-  alexandria:hash-table-alist
-  (sort _ #'> :key #'cdr)
-  (take 10 _)
-  )
-
-(_ (seq *r*)
-  (minimizers/fast 8 15 _)
-  (mapcar #'hash _)
-  frequencies
-  alexandria:hash-table-alist
-  (sort _ #'> :key #'cdr)
-  (take 10 _)
-  )
-
-(_ (seq *r*)
-  (minimizers/fast 8 15 _)
-  length
-  (truncate _ 1000)
-  )
 
