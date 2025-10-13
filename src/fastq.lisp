@@ -10,8 +10,8 @@
     (for seq = (read-line stream))
     (assert (char= #\+ (read-char stream)))
     (peek-char #\newline stream) (read-char stream) ; +
-    (peek-char #\newline stream) (read-char stream) ; quality scores
-    (funcall function id seq)))
+    (for qs = (read-line stream))
+    (funcall function id seq qs)))
 
 
 ;;;; FASTQ (Optimized) --------------------------------------------------------
@@ -26,7 +26,8 @@
 
 (defstruct (fastq-read (:conc-name nil))
   (id nil :type (simple-array u8 (*)))
-  (seq nil :type (simple-array u8 (*))))
+  (seq nil :type (simple-array u8 (*)))
+  (qs nil :type (simple-array u8 (*))))
 
 (defun-inline copy-buffer (buffer start end)
   (let ((result (make-array (- end start) :element-type 'u8)))
@@ -108,11 +109,12 @@
         (for seq = (read-line%))
         (chomp-byte #\+)
         (skip-line%) ; + line
-        (for quality-length = (skip-line% :allow-eof t)) ; quality scores
-        (unless (= quality-length (length seq))
+        (for quality-scores = (read-line%))
+        (map-into quality-scores (lambda (q) (- q (char-code #\!))) quality-scores)
+        (unless (= (length quality-scores) (length seq))
           (error "Mismatched number of quality scores (~D) for read of length ~D."
-                 quality-length (length seq)))
-        (funcall function (make-fastq-read :id id :seq seq)))
+                 (length quality-scores) (length seq)))
+        (funcall function (make-fastq-read :id id :seq seq :qs quality-scores)))
       ;; (print refills)
       (values))))
 

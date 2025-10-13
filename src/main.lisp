@@ -362,28 +362,6 @@
     ((< length 100000)  5000)
     (t 10000)))
 
-(defun plot-minimizers (id sequence hits clusters)
-  (uiop:with-temporary-file (:stream f
-                             :pathname p
-                             :direction :output
-                             :prefix "hits."
-                             :type "csv")
-    (conserve:write-row (list "c" "l1" "l2" "cluster") f)
-    (let ((cluster-index (index-hits clusters)))
-      (doseq (hit hits)
-        (conserve:write-row (list (princ-to-string (hit-c hit))
-                                  (princ-to-string (hit-l1 hit))
-                                  (princ-to-string (hit-l2 hit))
-                                  (princ-to-string (gethash hit cluster-index "NA")))
-                            f)))
-    (finish-output f)
-    (ensure-directories-exist (format nil "~A/plots/" *output-directory*))
-    (rscript *plotting-code*
-             (length sequence)
-             (choose-tics sequence)
-             (princ-to-string p)
-             (format nil "~A/plots/~A.png" *output-directory* id))))
-
 (defparameter *png-size*    512)
 
 (defun-inline cluster-color (cluster)
@@ -400,34 +378,97 @@
     (8 (values #x57 #x52 #x94))
     (t (values #x2F #x65 #xA7))))
 
-(defun render-minimizers (id sequence classification foldback-point hits clusters)
+;; The plot should look like:
+;;
+;; +------------------------------------------------------+
+;; | Title...                pad                          |
+;; |   +----------------------------------------------+   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |pad|                Minimizer Plot                |pad|
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   |                                              |   |
+;; |   +----------------------------------------------+   |
+;; |                         pad                          |
+;; |   +----------------------------------------------+   |
+;; |   |                 Quality Plot                 |   |
+;; |   +----------------------------------------------+   |
+;; | Legend                  pad                          |
+;; +------------------------------------------------------+
+;;
+;; mp = minimizer plot
+;; qp = quality plot
+;; lg = legend
+;; ti = title
+;; s = start
+;; e = end
+;; w = width
+;; h = height
+
+(defun render-minimizers (id sequence quality-scores classification foldback-point hits clusters)
   (assert (>= *png-size* 64))
   (let* ((size *png-size*)
+         (pad (max 15 (truncate size 20)))
+         (avg-window (max 2 (truncate (length sequence) 200)))
+         (w size)
+         (mpw (- size (* 2 pad)))
+         (mph (- size (* 2 pad)))
+         (qpw (- size (* 2 pad)))
+         (qph (truncate size 10))
+         (tix 5)
+         (tiy 5)
+         (mpx pad)
+         (mpxs (+ mpx 0))
+         (mpxe (+ mpx mpw))
+         (mpy pad)
+         (mpys (+ mpy 0))
+         (mpye (+ mpy mph))
+         (qpx pad)
+         (qpxs (+ qpx 0))
+         (qpxe (+ qpx qpw))
+         (qpy (+ mph (* 2 pad)))
+         (qpys (+ qpy 0))
+         (qpye (+ qpy qph))
+         (h (+ mph qph (* 3 pad)))
+         (lgx 5)
+         (lgy (- h 10))
          (png (make-instance 'zpng:png
                 :color-type :truecolor
-                :width size
-                :height size))
+                :width w
+                :height h))
          (img (zpng:data-array png))
          (len (length sequence))
          (idx (index-hits clusters))
-         (pad (truncate size 20))
          (pp 1)
-         (s pad)
-         (e (- size pad))
-         (pixels-per-base (/ (- e s) len))
+         (pixels-per-base (/ mpw len))
          (tic-bases (choose-tics sequence))
          (tic-width (truncate (* tic-bases pixels-per-base)))
          (tic-length (truncate pad 3)))
-    (dotimes (i (array-total-size img))
+    (dotimes (i (array-total-size img)) ; fill white
       (setf (row-major-aref img i) #xFF))
-    (labels ((base->x (base) (values (truncate (map-range 0 len s e base))))
-             (base->y (base) (values (truncate (map-range 0 len e s base))))
+    (labels ((base->x (base) (values (truncate (map-range 0 len mpx (+ mpx mpw) base))))
+             (base->y (base) (values (truncate (map-range 0 len (+ mpy mph) mpy base))))
+             (quality->y (q) (values (truncate (map-range 0 50 qpye qpys q))))
              (hit-x (hit) (base->x (hit-l1 hit)))
              (hit-y (hit) (base->y (hit-l2 hit)))
              (ink (x y &optional (a #x30))
+               "Darken a pixel."
                (dotimes (ch 3)
                  (setf (aref img y x ch) (max 0 (- (aref img y x ch) a)))))
              (draw (x y r &optional (g r) (b g))
+               "Set a pixel to a color."
                (setf (aref img y x 0) r
                      (aref img y x 1) g
                      (aref img y x 2) b))
@@ -458,26 +499,28 @@
                  (for char :in-string string)
                  (for w = (draw-char x y char))
                  (incf x (1+ w)))))
-      (draw-string 5 5 (format nil "Read ~A (~A)" id (string-downcase classification)))
-      (draw-string 5 (- size 10)
-                   (format nil "tics = ~:Dbp, read length = ~:D, ~A"
-                           tic-bases len
-                           (if foldback-point
-                             (format nil "foldback point = ~:D" foldback-point)
-                             "no foldback detected")))
-      (do-range ((x (1- s) e)) (draw x e #x66)) ; x axis
-      (do-range ((y s e)) (draw (1- s) y #x66)) ; y axis
-      (iterate (for tx :from (+ s tic-width) :to e :by tic-width) ; xticx
-               (loop :for ty :from (1+ e)
+      ;; Title
+      (draw-string tix tiy (format nil "Read ~A (~A)" id (string-downcase classification)))
+      ;; Legend
+      (draw-string lgx lgy (format nil "tics = ~:Dbp, read length = ~:D, mean Q = ~,1F, ~A"
+                                   tic-bases len
+                                   (/ (float (summation quality-scores)) (length quality-scores))
+                                   (if foldback-point
+                                     (format nil "foldback point = ~:D" foldback-point)
+                                     "no foldback detected")))
+      (do-range ((x mpxs mpxe)) (draw x mpye #x66)) ; x axis
+      (do-range ((y mpys mpye)) (draw mpxs y #x66)) ; y axis
+      (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
+               (loop :for ty :from mpye
                      :repeat tic-length
                      :do (draw tx ty #x66)))
-      (iterate (for ty :from (- e tic-width) :downto s :by tic-width) ; ytics
-               (loop :for tx :downfrom (- s 2)
+      (iterate (for ty :from (- mpye tic-width) :downto mpxs :by tic-width) ; ytics
+               (loop :for tx :downfrom mpxs
                      :repeat tic-length
                      :do (draw tx ty #x66)))
       (when foldback-point ; draw dashed line at foldback point
         (iterate (with x = (base->x foldback-point))
-                 (for y :from s :to e :by 4)
+                 (for y :from mpys :to mpye :by 4)
                  (draw x y      #xBF #xB0 #x86)
                  (draw x (1+ y) #xBF #xB0 #x86)))
       (doseq (hit hits) ; unclustered hits
@@ -488,7 +531,28 @@
         (let ((cluster (gethash hit idx)))
           (when cluster
             (multiple-value-call #'draw-point
-              (hit-y hit) (hit-x hit) (cluster-color cluster))))))
+              (hit-y hit) (hit-x hit) (cluster-color cluster)))))
+      ;; quality scores
+      (let ((q20y (quality->y 20)))
+        (do-range ((x qpxs qpxe))
+          (draw x (1- qpys) #xCC)
+          (draw x (1+ qpye) #xCC)
+          (draw x q20y #x00 #xAA #x00))
+        (draw-string (- qpxs (min pad 20)) (- qpys 4) "Q50")
+        (draw-string (- qpxs (min pad 20)) (- q20y 3) "Q20")
+        (draw-string (- qpxs (min pad 15)) (- qpye 2) "Q0"))
+      ;; (draw-string (- qpxs (min pad 15)) (- qpye 12) (format nil "A~D" avg-window))
+      (iterate (with qs = (make-array avg-window))
+               (for b :from 0)
+               (for q :in-vector quality-scores)
+               (setf (aref qs (mod b avg-window)) q)
+               (for x = (base->x b))
+               (for y = (quality->y q))
+               (ink x y #x66)
+               (when (> b avg-window)
+                 (for xa = (base->x b))
+                 (for ya = (quality->y (/ (summation qs) avg-window)))
+                 (draw xa ya #xFF 0 0))))
     (ensure-directories-exist (format nil "~A/plots/" *output-directory*))
     (zpng:write-png png (format nil "~A/plots/~A.png" *output-directory* id)
                     :if-exists :supersede)))
@@ -556,7 +620,7 @@
     (truncate (+ start end) 2)))
 
 
-(defun find-foldback (id sequence &key (optimized nil))
+(defun find-foldback (id sequence quality-scores &key (optimized nil))
   (if optimized
     (check-type sequence a8)
     (check-type sequence string))
@@ -580,7 +644,7 @@
                                   (compute-foldback-position result))))
         (when (or (and results *plot-foldbacks*)
                   (and (null results) *plot-normal*))
-          (render-minimizers id sequence classification foldback-position hits clusters))
+          (render-minimizers id sequence quality-scores classification foldback-position hits clusters))
         (list id read-length classification monotony foldback-position)))))
 
 
@@ -617,8 +681,8 @@
   (with-open-file (input-stream filename :direction :input)
     (with-open-file (output-stream (format nil "~A.csv" *output-directory*) :direction :output :if-exists :supersede)
       (conserve:write-row *csv-headers* output-stream)
-      (do-fastq (lambda (id seq)
-                  (write-csv-result (find-foldback id seq :optimized nil) output-stream))
+      (do-fastq (lambda (id seq qs)
+                  (write-csv-result (find-foldback id seq qs :optimized nil) output-stream))
                 input-stream))))
 
 
@@ -706,7 +770,7 @@
                   (found (let ((id (parse-read-id (id fastq-read))))
                            (lparallel.queue:push-queue id *progress-queue*)
                            (lparallel.queue:push-queue
-                             (find-foldback id (seq fastq-read) :optimized t)
+                             (find-foldback id (seq fastq-read) (qs fastq-read) :optimized t)
                              *output-queue*)))
                   (t (progn)))))
     (bt2:atomic-integer-decf *workers-running*)))
