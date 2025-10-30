@@ -649,17 +649,19 @@
 
 
 ;;;; Toplevel -----------------------------------------------------------------
-(defparameter *csv-headers* (list "read-id" "read-length" "classification" "monotony" "foldback-point"))
+(defparameter *csv-headers*
+  (list "read-id" "read-length" "classification" "monotony" "foldback-point" "processing-time-microsec"))
 
 (defun write-csv-result (result stream)
-  (destructuring-bind (id read-length class monotony foldback-point) result
+  (destructuring-bind (processing-time id read-length class monotony foldback-point) result
     (conserve:write-row (list id
                               (princ-to-string read-length)
                               (string-downcase class)
                               (format nil "~,4F" monotony)
                               (if foldback-point
                                 (princ-to-string foldback-point)
-                                ""))
+                                "")
+                              (princ-to-string processing-time))
                         stream)))
 
 (defun write-bed-result (result stream)
@@ -677,13 +679,6 @@
                                               id))
                                 stream)))))))
 
-(defun run/slow (filename)
-  (with-open-file (input-stream filename :direction :input)
-    (with-open-file (output-stream (format nil "~A.csv" *output-directory*) :direction :output :if-exists :supersede)
-      (conserve:write-row *csv-headers* output-stream)
-      (do-fastq (lambda (id seq qs)
-                  (write-csv-result (find-foldback id seq qs :optimized nil) output-stream))
-                input-stream))))
 
 
 (defparameter *interactive* t)
@@ -729,6 +724,11 @@
              (error (,err) (die ,err)))))))
 
 
+(defun gettime ()
+  (multiple-value-bind (sec microsec)
+      (sb-ext:get-time-of-day)
+    (+ (* 1000000 sec) microsec)))
+
 (defun run/reader% (fastq-filename)
   (with-exit-during-noninteractive-mode
     (flet ((run% (stream)
@@ -767,11 +767,15 @@
     (loop (multiple-value-bind (fastq-read found)
               (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
             (cond ((and (not found) *input-done*) (return))
-                  (found (let ((id (parse-read-id (id fastq-read))))
-                           (lparallel.queue:push-queue id *progress-queue*)
-                           (lparallel.queue:push-queue
-                             (find-foldback id (seq fastq-read) (qs fastq-read) :optimized t)
-                             *output-queue*)))
+                  (found (let* ((start (gettime))
+                                (id (parse-read-id (id fastq-read)))
+                                (_ (lparallel.queue:push-queue id *progress-queue*))
+                                (result (find-foldback id (seq fastq-read) (qs fastq-read) :optimized t))
+                                (end (gettime))
+                                (processing-time (- end start))
+                                (result (cons processing-time result)))
+                           (declare (ignore _))
+                           (lparallel.queue:push-queue result *output-queue*)))
                   (t (progn)))))
     (bt2:atomic-integer-decf *workers-running*)))
 
