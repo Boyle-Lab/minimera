@@ -631,6 +631,8 @@
     (check-type sequence a8)
     (check-type sequence string))
   (let* ((read-length (length sequence))
+         (quality-scores
+           (map-into quality-scores (lambda (q) (- q (char-code #\!))) quality-scores))
          (m1 (if optimized
                (minimizers/fast *k* *w* sequence)
                (minimizers *k* *w* sequence)))
