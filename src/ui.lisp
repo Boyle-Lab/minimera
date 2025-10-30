@@ -230,6 +230,6 @@
               "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
             (assert (<= 0.0 *monotony-threshold* 1.0) ()
               "Monotony threshold (~A) must be in the range [0, 1]." *monotony-threshold*)
-            (run/fast (first arguments) :alignments (gethash 'alignments options)))
+            (run (first arguments) :alignments-file (gethash 'alignments options)))
         (error (e)
                (adopt:print-error-and-exit e))))))

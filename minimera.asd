@@ -6,13 +6,20 @@
   :license "TODO"
   :version "0.0.1"
 
-  :depends-on (:losh :iterate :alexandria :uuid :str :conserve :lparallel :adopt :parse-float :cl-netpbm :zpng)
+  :depends-on (:adopt
+               :alexandria
+               :cl-netpbm
+               :conserve
+               :faster
+               :iterate
+               :losh
+               :parse-float
+               :zpng)
 
 
   :serial t
   :components ((:module "src" :serial t
                 :components ((:file "package")
-                             (:file "fastq")
                              (:file "hash")
                              (:file "patience")
                              (:file "m5x7")

@@ -21,11 +21,17 @@
 
 
 (defparameter *worker-threads* 6)
-
 (defparameter *output-directory* "results")
-
-
 (defparameter *report-progress* t)
+(defparameter *interactive* t)
+
+
+;;;; Types --------------------------------------------------------------------
+(deftype u8 ()
+  '(unsigned-byte 8))
+
+(deftype a8 ()
+  '(simple-array u8 (*)))
 
 ;;;; Minimizers ---------------------------------------------------------------
 (declaim (inline make-minmimizer))
@@ -650,10 +656,17 @@
 
 ;;;; Toplevel -----------------------------------------------------------------
 (defparameter *csv-headers*
-  (list "read-id" "read-length" "classification" "monotony" "foldback-point" "processing-time-microsec"))
+  (list "read-id"
+        "read-length"
+        "classification"
+        "monotony"
+        "foldback-point"
+        "processing-time-microsec"))
 
 (defun write-csv-result (result stream)
-  (destructuring-bind (processing-time id read-length class monotony foldback-point) result
+  (destructuring-bind
+      (processing-time id read-length class monotony foldback-point)
+      result
     (conserve:write-row (list id
                               (princ-to-string read-length)
                               (string-downcase class)
@@ -680,132 +693,46 @@
                                 stream)))))))
 
 
-
-(defparameter *interactive* t)
-(defparameter *input-done* nil)
-(defparameter *workers-running* nil)
-
-(defun-inline workers-finished-p ()
-  (zerop (bt2:atomic-integer-value *workers-running*)))
-
-(defparameter *input-queue*  (lparallel.queue:make-queue :fixed-capacity (* 2 *worker-threads*)))
-(defparameter *output-queue* (lparallel.queue:make-queue :fixed-capacity (* 2 *worker-threads*)))
-(defparameter *progress-queue* (lparallel.queue:make-queue))
-
-
-(defun read-id-char-p (byte)
-  (or (<= (char-code #\a) byte (char-code #\z))
-      (<= (char-code #\A) byte (char-code #\Z))
-      (<= (char-code #\0) byte (char-code #\9))
-      (= byte (char-code #\-))
-      (= byte (char-code #\_))))
-
-(defun parse-read-id (bytes)
-  (_ bytes
-    (subseq _ 0 (position-if-not #'read-id-char-p _))
-    (map 'string #'code-char _)))
-
-
-(defun die (error)
-  (adopt:print-error-and-exit
-    error
-    :exit-function (lambda (code)
-                     (sb-ext:exit :code code
-                                  :abort t
-                                  :timeout 4))))
-
-(defmacro with-exit-during-noninteractive-mode (&body body)
-  "Run `body`, killing everything upon an error when running noninteractively."
-  (with-gensyms (thunk err)
-    `(let ((,thunk (lambda () ,@body)))
-       (if *interactive*
-           (funcall ,thunk)
-           (handler-case (funcall ,thunk)
-             (error (,err) (die ,err)))))))
-
-
 (defun gettime ()
   (multiple-value-bind (sec microsec)
       (sb-ext:get-time-of-day)
     (+ (* 1000000 sec) microsec)))
 
-(defun run/reader% (fastq-filename)
-  (with-exit-during-noninteractive-mode
-    (flet ((run% (stream)
-             (map-fastq (lambda (fastq-read)
-                          (lparallel.queue:push-queue fastq-read *input-queue*))
-                        stream)))
-      (if (string= fastq-filename "-")
-        (run% *standard-input*)
-        (with-open-file (input-stream fastq-filename :direction :input :element-type 'u8)
-          (run% input-stream))))
-    (setf *input-done* t)))
 
-(defun run/writer% ()
-  (let ((bed-stream (when *alignments*
-                      (open (format nil "~A/foldbacks.bed" *output-directory*)
-                            :direction :output
-                            :if-exists :supersede))))
+(defun output% (bed-stream csv-stream result)
+  (write-csv-result result csv-stream)
+  (when bed-stream
+    (write-bed-result result bed-stream)))
+
+(defun work% (fastq-read)
+  (let* ((start (gettime))
+         (id (faster:parse-sequence-id (faster:id fastq-read)))
+         (result (find-foldback id
+                                (faster:seq fastq-read)
+                                (faster:qs fastq-read)
+                                :optimized t))
+         (end (gettime))
+         (processing-time (- end start)))
+    (cons processing-time result)))
+
+(defun run (filename &key alignments-file)
+  (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
+  (let* ((alignments (when alignments-file
+                       (parse-alignment-file alignments-file)))
+         (bed-stream (when alignments
+                       (open (format nil "~A/foldbacks.bed" *output-directory*)
+                             :direction :output
+                             :if-exists :supersede))))
     (unwind-protect
         (with-open-file (csv-stream (format nil "~A/foldbacks.csv" *output-directory*)
                                     :direction :output
                                     :if-exists :supersede)
           (conserve:write-row *csv-headers* csv-stream)
-          (loop (multiple-value-bind (result found)
-                    (lparallel.queue:try-pop-queue *output-queue* :timeout 1)
-                  (cond ((and (not found) (workers-finished-p)) (return))
-                        (found (progn
-                                 (write-csv-result result csv-stream)
-                                 (when bed-stream
-                                   (write-bed-result result bed-stream))))
-                        (t (progn))))))
+          (faster:run filename
+                      :work-function #'work%
+                      :output-function (curry #'output% bed-stream csv-stream)
+                      :interactive *interactive*
+                      :report-progress *report-progress*
+                      :worker-threads *worker-threads*))
       (when bed-stream
         (close bed-stream)))))
-
-(defun run/worker% ()
-  (with-exit-during-noninteractive-mode
-    (loop (multiple-value-bind (fastq-read found)
-              (lparallel.queue:try-pop-queue *input-queue* :timeout 1)
-            (cond ((and (not found) *input-done*) (return))
-                  (found (let* ((start (gettime))
-                                (id (parse-read-id (id fastq-read)))
-                                (_ (lparallel.queue:push-queue id *progress-queue*))
-                                (result (find-foldback id (seq fastq-read) (qs fastq-read) :optimized t))
-                                (end (gettime))
-                                (processing-time (- end start))
-                                (result (cons processing-time result)))
-                           (declare (ignore _))
-                           (lparallel.queue:push-queue result *output-queue*)))
-                  (t (progn)))))
-    (bt2:atomic-integer-decf *workers-running*)))
-
-(defun run/progress% ()
-  (with-exit-during-noninteractive-mode
-    (let ((n 0))
-      (loop (multiple-value-bind (update found)
-                (lparallel.queue:try-pop-queue *progress-queue* :timeout 1)
-              (cond ((and (not found) (workers-finished-p))
-                     (return))
-                    (found (progn (when *report-progress*
-                                    (format *error-output* "Processing: ~A~%" update)
-                                    (force-output *error-output*))
-                                  (incf n)))
-                    (t (progn))))))))
-
-(defun run/fast (filename &key alignments)
-  (setf *input-done* nil
-        *workers-running* (bt2:make-atomic-integer :value *worker-threads*))
-  (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
-  (when alignments
-    (setf *alignments* (parse-alignment-file alignments)))
-  ;; Spawn single reader thread.
-  (bt2:make-thread (lambda () (run/reader% filename)) :name "Minimera FASTQ Reader")
-  ;; Spawn N worker threads.
-  (dotimes (i *worker-threads*)
-    (bt2:make-thread (lambda () (run/worker%)) :name (format nil "Minimera Worker ~D" (1+ i))))
-  ;; Spawn single progress thread.
-  (bt2:make-thread (lambda () (run/progress%)) :name "Minimera Progress Reporter")
-  ;; Spawn a single writer thread, and join it to wait for things to finish.
-  (bt2:join-thread
-    (bt2:make-thread (lambda () (run/writer%)) :name "Minimera Output Writer")))
-
