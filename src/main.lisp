@@ -13,12 +13,10 @@
 
 (defparameter *monotony-threshold* 0.80)
 
-(defparameter *plot-foldbacks* nil
-  "Whether to generate plots (with the accompanying R script) of reads determined to be foldbacks.")
-
-(defparameter *plot-normal* nil
-  "Whether to generate plots (with the accompanying R script) of reads determined *not* to be foldbacks.")
-
+(defparameter *plot-foldbacks* nil)
+(defparameter *plot-normal* nil)
+(defparameter *low-quality-threshold* 3)
+(defparameter *low-quality-window-size* 20)
 
 (defparameter *worker-threads* 6)
 (defparameter *output-directory* "results")
@@ -32,6 +30,7 @@
 
 (deftype a8 ()
   '(simple-array u8 (*)))
+
 
 ;;;; Minimizers ---------------------------------------------------------------
 (declaim (inline make-minmimizer))
@@ -340,8 +339,6 @@
 
 
 ;;;; Plotting -----------------------------------------------------------------
-(defparameter *plotting-code* (alexandria:read-file-into-string "src/plot.R"))
-
 (defun index-hits (clusters)
   "Index the minimizers hits inside each cluster of `clusters`.
 
@@ -368,7 +365,6 @@
     ((< length 100000)  5000)
     (t 10000)))
 
-(defparameter *png-size*    512)
 
 (defun-inline cluster-color (cluster)
   (case cluster
@@ -411,7 +407,9 @@
 ;; |   +----------------------------------------------+   |
 ;; |   |                 Quality Plot                 |   |
 ;; |   +----------------------------------------------+   |
-;; | Legend                  pad                          |
+;; |                       1/2 pad                        |
+;; | Legend1               1/2 pad                        |
+;; | Legend2               1/2 pad                        |
 ;; +------------------------------------------------------+
 ;;
 ;; mp = minimizer plot
@@ -423,11 +421,14 @@
 ;; w = width
 ;; h = height
 
-(defun render-minimizers (id sequence quality-scores classification foldback-point hits clusters)
-  (assert (>= *png-size* 64))
-  (let* ((size *png-size*)
-         (pad (max 15 (truncate size 20)))
-         (avg-window (max 2 (truncate (length sequence) 200)))
+(defun render-minimizers (id sequence quality-scores classification foldback-point llqma hits clusters)
+  (let* ((size 512)
+         (pad 26)
+         (pad/2 (truncate pad 2))
+         ;; Always using the llqma window size results in too many pixels drawn
+         ;; for larger reads.  todo fix this by being smarter about drawing?
+         (avg-window (max *low-quality-window-size*
+                          (truncate (length sequence) 200)))
          (w size)
          (mpw (- size (* 2 pad)))
          (mph (- size (* 2 pad)))
@@ -447,9 +448,12 @@
          (qpy (+ mph (* 2 pad)))
          (qpys (+ qpy 0))
          (qpye (+ qpy qph))
-         (h (+ mph qph (* 3 pad)))
-         (lgx 5)
-         (lgy (- h 10))
+         (lgh pad)
+         (h (+ pad mph pad qph pad/2 lgh))
+         (lg1x 5)
+         (lg1y (- h pad))
+         (lg2x 5)
+         (lg2y (- h pad/2))
          (png (make-instance 'zpng:png
                 :color-type :truecolor
                 :width w
@@ -508,12 +512,14 @@
       ;; Title
       (draw-string tix tiy (format nil "Read ~A (~A)" id (string-downcase classification)))
       ;; Legend
-      (draw-string lgx lgy (format nil "tics = ~:Dbp, read length = ~:D, mean Q = ~,1F, ~A"
-                                   tic-bases len
-                                   (/ (float (summation quality-scores)) (length quality-scores))
-                                   (if foldback-point
-                                     (format nil "foldback point = ~:D" foldback-point)
-                                     "no foldback detected")))
+      (draw-string lg1x lg1y (format nil "tics = ~:Dbp, read length = ~:D, ~A"
+                                     tic-bases len
+                                     (if foldback-point
+                                       (format nil "foldback point = ~:D" foldback-point)
+                                       "no foldback detected")))
+      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqma = ~D"
+                                     (/ (float (summation quality-scores)) (length quality-scores))
+                                     llqma))
       (do-range ((x mpxs mpxe)) (draw x mpye #x66)) ; x axis
       (do-range ((y mpys mpye)) (draw mpxs y #x66)) ; y axis
       (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
@@ -562,6 +568,39 @@
     (ensure-directories-exist (format nil "~A/plots/" *output-directory*))
     (zpng:write-png png (format nil "~A/plots/~A.png" *output-directory* id)
                     :if-exists :supersede)))
+
+
+;;;; Hallucination ------------------------------------------------------------
+(defun compute-llqma (quality-scores &key
+                      (window-size *low-quality-window-size*)
+                      (low-quality-threshold *low-quality-threshold*))
+  "Return the longest stretch of low-quality-moving-average in `quality-scores`."
+  (declare (optimize (speed 3) (space 1) (safety 1) (debug 1)))
+  (check-type quality-scores a8)
+  (check-type low-quality-threshold (integer 1 60))
+  (check-type window-size (integer 1 4096))
+  (iterate
+    (with window-size = *low-quality-window-size*)
+    (with sum = 0)
+    (with sum-threshold = (* window-size low-quality-threshold))
+    (with best = 0)
+    (with run = 0)
+
+    (for q :in-vector quality-scores :with-index i)
+    (incf sum q)
+    (declare (type fixnum q sum sum-threshold run i window-size best))
+
+    (cond ((< i window-size) (next-iteration))
+          ((>= i window-size) (decf sum (aref quality-scores (- i window-size)))))
+
+    (if (<= sum sum-threshold)
+      (incf run)
+      (setf run 0))
+
+    (when (> run best)
+      (setf best run))
+
+    (returning best)))
 
 
 ;;;; Alignments ---------------------------------------------------------------
@@ -621,24 +660,37 @@
 
 
 ;;;; Main Entry Point ---------------------------------------------------------
+(defclass* minimera-result ()
+  (read-id
+   read-length
+   classification
+   monotony
+   (foldback-point :initform nil)
+   llqma
+   processing-time))
+
 (defun compute-foldback-position (cluster)
   (multiple-value-bind (start end) (cluster-bounds cluster)
     (truncate (+ start end) 2)))
 
 
-(defun find-foldback (id sequence quality-scores &key (optimized nil))
+(defun process-read (id sequence quality-scores &key (optimized nil))
   (if optimized
     (check-type sequence a8)
     (check-type sequence string))
   (let* ((read-length (length sequence))
-         (quality-scores
-           (map-into quality-scores (lambda (q) (- q (char-code #\!))) quality-scores))
+         (llqma (compute-llqma quality-scores))
          (m1 (if optimized
                (minimizers/fast *k* *w* sequence)
                (minimizers *k* *w* sequence)))
          (monotony (estimate-monotony m1)))
     (if (>= monotony *monotony-threshold*)
-      (list id read-length :monotonous monotony nil)
+      (make-instance 'minimera-result
+        :read-id id
+        :read-length read-length
+        :classification :monotonous
+        :monotony monotony
+        :llqma llqma)
       (let* ((m2 (if optimized
                    ;; CAREFUL HERE, this nrev breaks using this function interactively
                    (minimizers/fast *k* *w* (nreverse-complement-bytes sequence))
@@ -652,8 +704,14 @@
                                   (compute-foldback-position result))))
         (when (or (and results *plot-foldbacks*)
                   (and (null results) *plot-normal*))
-          (render-minimizers id sequence quality-scores classification foldback-position hits clusters))
-        (list id read-length classification monotony foldback-position)))))
+          (render-minimizers id sequence quality-scores classification foldback-position llqma hits clusters))
+        (make-instance 'minimera-result
+          :read-id id
+          :read-length read-length
+          :classification classification
+          :monotony monotony
+          :llqma llqma
+          :foldback-point foldback-position)))))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
@@ -663,36 +721,33 @@
         "classification"
         "monotony"
         "foldback-point"
+        "llqma"
         "processing-time-microsec"))
 
 (defun write-csv-result (result stream)
-  (destructuring-bind
-      (processing-time id read-length class monotony foldback-point)
-      result
-    (conserve:write-row (list id
-                              (princ-to-string read-length)
-                              (string-downcase class)
-                              (format nil "~,4F" monotony)
-                              (if foldback-point
-                                (princ-to-string foldback-point)
-                                "")
-                              (princ-to-string processing-time))
-                        stream)))
+  (conserve:write-row (list (read-id result)
+                            (princ-to-string (read-length result))
+                            (string-downcase (classification result))
+                            (format nil "~,4F" (monotony result))
+                            (if (foldback-point result)
+                              (princ-to-string (foldback-point result))
+                              "")
+                            (princ-to-string (llqma result))
+                            (princ-to-string (processing-time result)))
+                      stream))
 
 (defun write-bed-result (result stream)
-  (destructuring-bind (id read-length class monotony foldback-point) result
-    (declare (ignore read-length class monotony))
-    (when foldback-point
-      (when-let ((alignment-info (gethash id *alignments*)))
-        (destructuring-bind (contig pos is-rev cigar) alignment-info
-          (let ((conserve:*delimiter* #\tab)
-                (reference-position (compute-reference-position pos cigar foldback-point is-rev)))
-            (conserve:write-row (mapcar 'princ-to-string
-                                        (list contig
-                                              (max 0 (1- reference-position))
-                                              (1+ reference-position)
-                                              id))
-                                stream)))))))
+  (when (foldback-point result)
+    (when-let ((alignment-info (gethash (read-id result) *alignments*)))
+      (destructuring-bind (contig pos is-rev cigar) alignment-info
+        (let ((conserve:*delimiter* #\tab)
+              (reference-position (compute-reference-position pos cigar (foldback-point result) is-rev)))
+          (conserve:write-row (mapcar 'princ-to-string
+                                      (list contig
+                                            (max 0 (1- reference-position))
+                                            (1+ reference-position)
+                                            (read-id result)))
+                              stream))))))
 
 
 (defun gettime ()
@@ -709,13 +764,13 @@
 (defun work% (fastq-read)
   (let* ((start (gettime))
          (id (faster:parse-sequence-id (faster:id fastq-read)))
-         (result (find-foldback id
-                                (faster:seq fastq-read)
-                                (faster:qs fastq-read)
-                                :optimized t))
+         (seq (faster:seq fastq-read))
+         (qs (faster:n-bytes-to-quality-scores (faster:qs fastq-read)))
+         (result (process-read id seq qs :optimized t))
          (end (gettime))
          (processing-time (- end start)))
-    (cons processing-time result)))
+    (setf (processing-time result) processing-time)
+    result))
 
 (defun run (filename &key alignments-file)
   (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))

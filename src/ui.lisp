@@ -133,6 +133,26 @@
     :initial-value 0.80
     :key #'parse-float:parse-float))
 
+(defparameter *o/low-quality-threshold*
+  (adopt:make-option 'low-quality-threshold
+    :help "Threshold (inclusive) for low-quality Phred scores when computing LLQMA (default: 3)."
+    :long "low-quality-threshold"
+    :short #\Q
+    :parameter "Q"
+    :reduce #'adopt:last
+    :initial-value 3
+    :key #'parse-integer))
+
+(defparameter *o/low-quality-window-size*
+  (adopt:make-option 'low-quality-window-size
+    :help "Size of moving average window when computing LLQMA (default: 20)."
+    :long "low-quality-window-size"
+    :short #\L
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 20
+    :key #'parse-integer))
+
 (adopt:defparameters (*o/plot/foldbacks* *o/plot/no-foldbacks*)
   (adopt:make-boolean-options 'plot-foldbacks
     :long "plot-foldbacks"
@@ -164,8 +184,8 @@
           *o/progress*
           *o/no-progress*
           *o/output-directory*
-          (adopt:make-group 'algorithm
-            :title "Algorithm Options"
+          (adopt:make-group 'foldback
+            :title "Foldback Options"
             :options (list *o/k*
                            *o/w*
                            *o/foldback-position-epsilon*
@@ -173,8 +193,14 @@
                            *o/gap-epsilon*
                            *o/minimum-cluster-length*
                            *o/minimum-foldback-length-absolute*
-                           *o/minimum-foldback-length-relative*
-                           *o/monotony-threshold*))
+                           *o/minimum-foldback-length-relative*))
+          (adopt:make-group 'monotony
+            :title "Monotony Options"
+            :options (list *o/monotony-threshold*))
+          (adopt:make-group 'llqma
+            :title "Low Quality Moving Average Options"
+            :options (list *o/low-quality-window-size*
+                           *o/low-quality-threshold*))
           (adopt:make-group 'plotting
             :title "Plotting Options"
             :help "Minimera can optionally generate plots of the minimizers for reads.  This requires Rscript and Tidyverse libraries to be installed.  Generating these plots is very slow, but they can be useful to debug edge cases."
@@ -205,6 +231,8 @@
         *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
         *monotony-threshold* (gethash 'monotony-threshold options)
+        *low-quality-threshold* (gethash 'low-quality-threshold options)
+        *low-quality-window-size* (gethash 'low-quality-window-size options)
         *plot-foldbacks* (gethash 'plot-foldbacks options)
         *plot-normal* (gethash 'plot-normal options)
         *output-directory* (gethash 'output-directory options)
@@ -216,6 +244,10 @@
             (assert (<= 1 *w* 31) () "Invalid window size ~A, must be in the range [1, 31]." *w*)
             (assert (<= 1 *k* 30) () "Invalid kmer size ~A, must be in the range [1, 30]." *k*)
             (assert (> *w* *k*) () "Window size (~A) must be larger than kmer size (~A)." *w* *k*)
+            (assert (<= 1 *low-quality-threshold* 60) ()
+              "Invalid low-quality threshold ~A, must be in the range [1, 60]." *low-quality-threshold*)
+            (assert (<= 1 *low-quality-window-size* 4096) ()
+              "Invalid low-quality window size ~A, must be in the range [1, 4096]." *low-quality-window-size*)
             (assert (plusp *foldback-position-epsilon*) ()
               "Foldback position epsilon (~A) must be positive." *foldback-position-epsilon*)
             (assert (plusp *intercept-epsilon*) ()
