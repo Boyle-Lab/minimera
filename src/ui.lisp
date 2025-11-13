@@ -35,14 +35,6 @@
     :parameter "PATH"
     :reduce #'adopt:last))
 
-(defparameter *o/alignments*
-  (adopt:make-option 'alignments
-    :help "CSV file of alignments for producing foldback point BED file."
-    :long "alignments"
-    :short #\a
-    :parameter "CSV"
-    :reduce #'adopt:last))
-
 (defparameter *o/k*
   (adopt:make-option 'k
     :help "Size of kmers (in base pairs) to use for minimizers (default: 8)."
@@ -207,11 +199,7 @@
             :options (list *o/plot/foldbacks*
                            *o/plot/no-foldbacks*
                            *o/plot/normal*
-                           *o/plot/no-normal*))
-          (adopt:make-group 'alignment
-            :title "Alignment Options"
-            :help "Minimera can optionally generate a BED file of detected foldback points if given information about read alignments.  See the man page for more details."
-            :options (list *o/alignments*)))))
+                           *o/plot/no-normal*)))))
 
 
 (defun toplevel ()
@@ -262,6 +250,6 @@
               "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
             (assert (<= 0.0 *monotony-threshold* 1.0) ()
               "Monotony threshold (~A) must be in the range [0, 1]." *monotony-threshold*)
-            (run (first arguments) :alignments-file (gethash 'alignments options)))
+            (run (first arguments)))
         (error (e)
                (adopt:print-error-and-exit e))))))

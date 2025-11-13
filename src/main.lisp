@@ -337,6 +337,10 @@
                    (curry #'region-long-enough-p read-length))
                  clusters))
 
+(defun compute-foldback-position (cluster)
+  (multiple-value-bind (start end) (cluster-bounds cluster)
+    (truncate (+ start end) 2)))
+
 
 ;;;; Plotting -----------------------------------------------------------------
 (defun index-hits (clusters)
@@ -603,62 +607,6 @@
     (returning best)))
 
 
-;;;; Alignments ---------------------------------------------------------------
-(defparameter *alignments* nil)
-
-(defun parse-alignment-file (path)
-  (with-open-file (stream path)
-    (conserve:read-row stream) ; header
-    (iterate
-      (for (id contig pos rev flag cigar) :in-stream stream :using #'conserve:read-row)
-      (declare (ignorable flag))
-      (collect-hash (id (list contig
-                              (parse-integer pos)
-                              (string= rev "1")
-                              cigar))
-                    :test #'equal))))
-
-(defun parse-cigar (cigar-string)
-  (gathering
-    (ppcre:do-register-groups ((#'parse-integer n) op)
-        ("([0-9]+)?([^0-9])" cigar-string)
-      (gather (cons (char op 0) (or n 1))))))
-
-(defun alignment-length (cigar)
-  (loop :for (op . n) :in cigar
-        :summing (ecase op
-                   ((#\S #\H #\I) 0)
-                   ((#\M #\= #\X #\D) n))))
-
-(defun compute-reference-offset (cigar foldback-point)
-  (let ((offset 0))
-    (destructuring-bind (op . n) (first cigar)
-      (case op
-        ;; Account for the weird start position in the case of soft clip.
-        (#\S (decf offset n))
-        ;; If it's hard clipped we wouldn't have included that bit in the read
-        ;; sequence we searched for minimizers, I think?
-        (#\H (progn (pop cigar)))))
-    (iterate
-      (with f = foldback-point)
-      (for (op . n) :in cigar)
-      (while (plusp f))
-      (ecase op
-        ((#\D) (incf offset n))
-        ((#\M #\= #\X #\S) (progn (incf offset (min f n))
-                                  (setf f (max 0 (- f n)))))
-        ((#\I) (setf f (max 0 (- f n))))))
-    offset))
-
-(defun compute-reference-position (pos cigar-string foldback-point is-rev)
-  (let ((cigar (parse-cigar cigar-string)))
-    (if is-rev
-        (let* ((pos (+ pos (alignment-length cigar)))
-               (cigar (reverse cigar)))
-          (- pos (compute-reference-offset cigar foldback-point)))
-      (+ pos (compute-reference-offset cigar foldback-point)))))
-
-
 ;;;; Main Entry Point ---------------------------------------------------------
 (defclass* minimera-result ()
   (read-id
@@ -668,10 +616,6 @@
    (foldback-point :initform nil)
    llqma
    processing-time))
-
-(defun compute-foldback-position (cluster)
-  (multiple-value-bind (start end) (cluster-bounds cluster)
-    (truncate (+ start end) 2)))
 
 
 (defun process-read (id sequence quality-scores &key (optimized nil))
@@ -724,7 +668,8 @@
         "llqma"
         "processing-time-microsec"))
 
-(defun write-csv-result (result stream)
+
+(defun output% (csv-stream result)
   (conserve:write-row (list (read-id result)
                             (princ-to-string (read-length result))
                             (string-downcase (classification result))
@@ -734,32 +679,13 @@
                               "")
                             (princ-to-string (llqma result))
                             (princ-to-string (processing-time result)))
-                      stream))
-
-(defun write-bed-result (result stream)
-  (when (foldback-point result)
-    (when-let ((alignment-info (gethash (read-id result) *alignments*)))
-      (destructuring-bind (contig pos is-rev cigar) alignment-info
-        (let ((conserve:*delimiter* #\tab)
-              (reference-position (compute-reference-position pos cigar (foldback-point result) is-rev)))
-          (conserve:write-row (mapcar 'princ-to-string
-                                      (list contig
-                                            (max 0 (1- reference-position))
-                                            (1+ reference-position)
-                                            (read-id result)))
-                              stream))))))
+                      csv-stream))
 
 
 (defun gettime ()
   (multiple-value-bind (sec microsec)
       (sb-ext:get-time-of-day)
     (+ (* 1000000 sec) microsec)))
-
-
-(defun output% (bed-stream csv-stream result)
-  (write-csv-result result csv-stream)
-  (when bed-stream
-    (write-bed-result result bed-stream)))
 
 (defun work% (fastq-read)
   (let* ((start (gettime))
@@ -772,24 +698,16 @@
     (setf (processing-time result) processing-time)
     result))
 
-(defun run (filename &key alignments-file)
+
+(defun run (filename)
   (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
-  (let* ((alignments (when alignments-file
-                       (parse-alignment-file alignments-file)))
-         (bed-stream (when alignments
-                       (open (format nil "~A/foldbacks.bed" *output-directory*)
-                             :direction :output
-                             :if-exists :supersede))))
-    (unwind-protect
-        (with-open-file (csv-stream (format nil "~A/foldbacks.csv" *output-directory*)
-                                    :direction :output
-                                    :if-exists :supersede)
-          (conserve:write-row *csv-headers* csv-stream)
-          (faster:run filename
-                      :work-function #'work%
-                      :output-function (curry #'output% bed-stream csv-stream)
-                      :interactive *interactive*
-                      :report-progress *report-progress*
-                      :worker-threads *worker-threads*))
-      (when bed-stream
-        (close bed-stream)))))
+  (with-open-file (csv-stream (format nil "~A/foldbacks.csv" *output-directory*)
+                              :direction :output
+                              :if-exists :supersede)
+    (conserve:write-row *csv-headers* csv-stream)
+    (faster:run filename
+                :work-function #'work%
+                :output-function (curry #'output% csv-stream)
+                :interactive *interactive*
+                :report-progress *report-progress*
+                :worker-threads *worker-threads*)))
