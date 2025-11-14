@@ -1,10 +1,10 @@
 (asdf:defsystem :minimera
-  :description "TODO"
+  :description "A tool for detecting problematic reads in Oxford Nanopore data."
   :author "Steve Losh <steve@stevelosh.com>"
-  :homepage "TODO"
+  :homepage "https://github.com/Boyle-Lab/minimera"
 
-  :license "TODO"
-  :version "0.0.1"
+  :license "GPL-3.0-or-later"
+  :version "0.1.0"
 
   :depends-on (:adopt
                :alexandria

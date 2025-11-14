@@ -1,14 +1,46 @@
+;;; Copyright 2025 Steve Losh and contributors
+;;; SPDX-License-Identifier: GPL-3.0-or-later
+
 (in-package :minimera)
 
 ;;;; UI -----------------------------------------------------------------------
 (adopt:define-string *documentation*
-  "Minimera is a tool for detecting foldback chimeric reads in Oxford Nanopore ~
-   data using minimizers.~@
+  "Minimera is a tool for detecting foldback chimeric and other problematic ~
+   reads in Oxford Nanopore data using minimizers.~@
    ~@
    Reads will be read from the specified fastq file (or stdin if - is given) and ~
    the results written to foldbacks.csv inside the specified output directory.  ~
    If plots are generated they will be inside a plots/ subdirectory of the ~
    output directory.")
+
+(adopt:define-string *manual*
+  "~A~@
+   ~@
+   The resulting foldbacks.csv file will contain the following columns:~@
+   ~@
+   1. read-id: the ID of the read~@
+   ~@
+   2. read-length: the length (in base pairs) of the read~@
+   ~@
+   3. classification: one of foldback/monotonous/normal~@
+   ~@
+   4. monotony: monotony score for the read~@
+   ~@
+   5. foldback-point: estimated position of the foldback point for foldbacks, empty otherwise~@
+   ~@
+   6. llqma: length of the longest low-quality moving average run in the read~@
+   ~@
+   7. llqma-start: start of the longest low-quality moving average run, blank if no run exists~@
+   ~@
+   8. llqma-end: end of the longest low-quality moving average run, blank if no run exists~@
+   ~@
+   9. processing-time-microsec: how long minimera took to process this read~@
+   ~@
+   New columns may be added after these in future versions of Minimera, so when ~
+   processing foldbacks.csv make sure to allow extra columns if you want to ~
+   remain forwards compatible."
+  *documentation*)
+
 
 (defparameter *o/help*
   (adopt:make-option 'help
@@ -137,12 +169,12 @@
 
 (defparameter *o/low-quality-window-size*
   (adopt:make-option 'low-quality-window-size
-    :help "Size of moving average window when computing LLQMA (default: 20)."
+    :help "Size of moving average window when computing LLQMA (default: 10)."
     :long "low-quality-window-size"
     :short #\L
     :parameter "N"
     :reduce #'adopt:last
-    :initial-value 20
+    :initial-value 10
     :key #'parse-integer))
 
 (adopt:defparameters (*o/plot/foldbacks* *o/plot/no-foldbacks*)
@@ -164,12 +196,21 @@
     :help-no "Do not report progress."
     :initial-value t))
 
+
+(defparameter *examples*
+  '(("Run minimera on a FASTQ:"
+     . "minimera path/to/data.fastq --output ./results/")
+    ("Run minimera with 8 worker threads, plotting any foldbacks:"
+     . "minimera path/to/data.fastq --threads 8 --plot-foldbacks --output ./results/")))
+
 (defparameter *ui*
   (adopt:make-interface
     :name "minimera"
-    :usage "[OPTIONS] --output PATH FASTQ"
+    :usage "[OPTIONS] --output=PATH FASTQ"
     :summary "detect foldback chimeric reads using minimizers"
     :help *documentation*
+    :manual *manual*
+    :examples *examples*
     :contents
     (list *o/help*
           *o/threads*
@@ -195,7 +236,7 @@
                            *o/low-quality-threshold*))
           (adopt:make-group 'plotting
             :title "Plotting Options"
-            :help "Minimera can optionally generate plots of the minimizers for reads.  This requires Rscript and Tidyverse libraries to be installed.  Generating these plots is very slow, but they can be useful to debug edge cases."
+            :help "Minimera can optionally generate plots of the minimizers for reads.  Generating these plots is slow, but they can be useful to debug edge cases."
             :options (list *o/plot/foldbacks*
                            *o/plot/no-foldbacks*
                            *o/plot/normal*
@@ -253,3 +294,7 @@
             (run (first arguments)))
         (error (e)
                (adopt:print-error-and-exit e))))))
+
+#; Scratch --------------------------------------------------------------------
+
+(adopt::print-manual/md *ui* :width 50)

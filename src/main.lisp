@@ -1,3 +1,6 @@
+;;; Copyright 2025 Steve Losh and contributors
+;;; SPDX-License-Identifier: GPL-3.0-or-later
+
 (in-package :minimera)
 
 ;;;; Configuration ------------------------------------------------------------
@@ -16,7 +19,7 @@
 (defparameter *plot-foldbacks* nil)
 (defparameter *plot-normal* nil)
 (defparameter *low-quality-threshold* 3)
-(defparameter *low-quality-window-size* 20)
+(defparameter *low-quality-window-size* 10)
 
 (defparameter *worker-threads* 6)
 (defparameter *output-directory* "results")
@@ -45,42 +48,6 @@
     (format s "~16,'0X ~D" (hash o) (pos o))))
 
 
-;;;; Minimizers (Reference) ---------------------------------------------------
-(defun reverse-complement (seq)
-  "Return a fresh string of the reverse complement of `seq`."
-  (nreverse (map 'string (lambda (ch)
-                           (ecase ch
-                             (#\A #\T)
-                             (#\C #\G)
-                             (#\G #\C)
-                             (#\T #\A)))
-                 seq)))
-
-(defun minimizer (k window window-start)
-  "Return the `k`-minimizer of `window`.
-
-  `window-start` must the the start position of the window in the overall
-  sequence, and is used to compute the position.
-
-  "
-  (iterate
-    (for (kmer ks ke) :window k :on window)
-    (for hash = (phihash-string kmer))
-    (for pos = (+ window-start ks))
-    (finding (make-minimizer hash pos) :minimizing hash)))
-
-(defun minimizers (k w sequence)
-  "Return a list of the (`k`, `w`, φ)-mimimizer sketch of `sequence`."
-  (iterate
-    (with prev)
-    (for (window ws we) :window w :on sequence)
-    (for minimizer = (minimizer k window ws))
-    (unless (and prev (= (pos prev) (pos minimizer)))
-      (collect minimizer)
-      (setf prev minimizer))))
-
-
-;;;; Minimizers (Optimized) ---------------------------------------------------
 (defun nreverse-complement-bytes (seq)
   "Mutate and return the reverse complement of `seq`."
   (declare (optimize (speed 3) (safety 1) (debug 1)))
@@ -114,7 +81,7 @@
            (for base :in-vector sequence :below w)
            (zapf result (wrap64 (logior (ash % 2) (base-bits base))))))
 
-(defun minimizer/fast (k w chunk window-start)
+(defun minimizer (k w chunk window-start)
   (declare (optimize (speed 3) (safety 1) (debug 1)))
   (check-type k (integer 1 30))
   (check-type w (integer 1 31))
@@ -130,7 +97,7 @@
     (for hash = (phihash-chunk kmer))
     (finding (make-minimizer hash window/pos) :minimizing hash)))
 
-(defun minimizers/fast (k w sequence)
+(defun minimizers (k w sequence)
   "Return a list of the (`k`, `w`, φ)-mimimizer sketches of `sequence`.
 
   `sequence` must be an array of FASTQ bytes.
@@ -173,17 +140,9 @@
       ;; Otherwise we don't have a previous winning minimizer, either because
       ;; we're at the beginning of the sequence or it fell off the moving
       ;; window.  Just recompute the window from scratch here.
-      (let ((next (minimizer/fast k w chunk start)))
+      (let ((next (minimizer k w chunk start)))
         (collect next)
         (setf prev next)))))
-
-
-(defun check-implementation (k w data)
-  (let ((bytes (map 'a8 #'char-code data)))
-    (equalp (loop :for m in (minimizers k w data)
-                  :collect (cons (hash m) (pos m)))
-            (loop :for m in (minimizers/fast k w bytes)
-                  :collect (cons (hash m) (pos m))))))
 
 
 ;;;; Monotony -----------------------------------------------------------------
@@ -342,6 +301,92 @@
     (truncate (+ start end) 2)))
 
 
+;;;; Hallucination ------------------------------------------------------------
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun q->p% (q)
+    ;; P = 10 ^ (-Q/10)
+    (expt 10.0d0 (/ (- q) 10.0d0)))
+
+  (defun make-q-table% ()
+    (let ((result (make-array (list 61) :element-type 'double-float)))
+      (loop :for q :from 0 :to 60
+            :do (setf (aref result q) (q->p% q)))
+      result)))
+
+(defun-inline q->p (q)
+  "Return the error probability (as a double-float) corresponding to Q score `q`.
+
+   `q` must be an `(integer 0 60)`, and a lookup table is used to make this
+   computation fast.  If you need to convert arbitrary Q scores (e.g. a mean
+   Q score) use `p->q%`.
+
+  "
+  (aref #.(make-q-table%) q))
+
+(defun-inline p->q (p)
+  "Return the Q score (as a double-float) corresponding to error probability `p`."
+  ;; Q = -10 * log10(P)
+  (* -10.0d0 (log p 10.0d0)))
+
+(defun mean-qscore (qs)
+  ;; Compute this in probability space.  Q scores are logarithmic so averaging
+  ;; them doesn't make much sense.
+  (if (zerop (length qs))
+    0.0d0
+    (float (p->q (/ (loop :for q :across qs
+                          :for p = (q->p q)
+                          :summing p)
+                    (length qs)))
+           0.0d0)))
+
+(defun compute-llqmar (quality-scores &key
+                       (window-size *low-quality-window-size*)
+                       (low-quality-threshold *low-quality-threshold*))
+  "Return the longest stretch of low-quality-moving-average in `quality-scores`."
+  (declare (optimize (speed 3) (space 1) (safety 1) (debug 1)))
+  (check-type quality-scores a8)
+  (check-type low-quality-threshold (integer 1 60))
+  (check-type window-size (integer 1 4096))
+  (flet ((q->p% (q) (q->p q))) ; only inline the lookup table once
+    (iterate
+      (declare (type fixnum       q run i w w-1 best best-end)
+               (type double-float p sum sum-threshold))
+
+      (with w = window-size)
+      (with w-1 = (1- window-size))
+      (with sum = 0.0d0)
+      (with sum-threshold = (* w (q->p% low-quality-threshold)))
+      (with best = 0)
+      (with best-end = -1)
+      (with run = 0)
+
+      (for q :in-vector quality-scores :with-index i)
+      (for p = (q->p% q))
+
+      (incf sum p)
+
+      (cond ((< i w-1) (next-iteration))
+            ((>= i w) (decf sum (q->p% (aref quality-scores (- i w))))))
+
+      (if (> sum sum-threshold) ; in p(error) space, higher is *worse*
+        (incf run)
+        (setf run 0))
+
+      (when (> run best)
+        (setf best run
+              best-end (1+ i)))
+
+      (finally (return
+                 (if (plusp best)
+                   ;; Convert length in windows to length/coords in bases.
+                   (let* ((region-length (+ best w-1))
+                          (region-end best-end)
+                          (region-start (- region-end region-length)))
+                     (declare (type fixnum region-length region-start region-end))
+                     (values region-length region-start region-end))
+                   (values 0 nil nil)))))))
+
+
 ;;;; Plotting -----------------------------------------------------------------
 (defun index-hits (clusters)
   "Index the minimizers hits inside each cluster of `clusters`.
@@ -425,7 +470,7 @@
 ;; w = width
 ;; h = height
 
-(defun render-minimizers (id sequence quality-scores classification foldback-point llqma hits clusters)
+(defun render-minimizers (id sequence quality-scores classification foldback-point llqmar llqmar-start llqmar-end hits clusters)
   (let* ((size 512)
          (pad 26)
          (pad/2 (truncate pad 2))
@@ -521,11 +566,12 @@
                                      (if foldback-point
                                        (format nil "foldback point = ~:D" foldback-point)
                                        "no foldback detected")))
-      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqma = ~D"
-                                     (/ (float (summation quality-scores)) (length quality-scores))
-                                     llqma))
-      (do-range ((x mpxs mpxe)) (draw x mpye #x66)) ; x axis
-      (do-range ((y mpys mpye)) (draw mpxs y #x66)) ; y axis
+      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqmar = ~D"
+                                     (mean-qscore quality-scores)
+                                     llqmar))
+      ;; X/Y axes and tic marks
+      (do-range ((x mpxs mpxe)) (draw x mpye #x66))
+      (do-range ((y mpys mpye)) (draw mpxs y #x66))
       (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
                (loop :for ty :from mpye
                      :repeat tic-length
@@ -534,30 +580,40 @@
                (loop :for tx :downfrom mpxs
                      :repeat tic-length
                      :do (draw tx ty #x66)))
-      (when foldback-point ; draw dashed line at foldback point
+      ; Draw dashed line at foldback point
+      (when foldback-point
         (iterate (with x = (base->x foldback-point))
                  (for y :from mpys :to mpye :by 4)
                  (draw x y      #xBF #xB0 #x86)
                  (draw x (1+ y) #xBF #xB0 #x86)))
-      (doseq (hit hits) ; unclustered hits
+      ;; Unclustered hits
+      (doseq (hit hits)
         (let ((cluster (gethash hit idx)))
           (unless cluster
             (draw-unclustered-point (hit-y hit) (hit-x hit)))))
-      (doseq (hit hits) ; clustered hits
+      ;; Clustered hits
+      (doseq (hit hits)
         (let ((cluster (gethash hit idx)))
           (when cluster
             (multiple-value-call #'draw-point
               (hit-y hit) (hit-x hit) (cluster-color cluster)))))
-      ;; quality scores
-      (let ((q20y (quality->y 20)))
+      ;; Quality scores labels
+      (let ((q20y (quality->y 20))
+            (lqy (quality->y *low-quality-threshold*)))
         (do-range ((x qpxs qpxe))
           (draw x (1- qpys) #xCC)
           (draw x (1+ qpye) #xCC)
-          (draw x q20y #x00 #xAA #x00))
+          (draw x q20y #x00 #xAA #x00)
+          (draw x lqy #xAA #x00 #x00))
         (draw-string (- qpxs (min pad 20)) (- qpys 4) "Q50")
         (draw-string (- qpxs (min pad 20)) (- q20y 3) "Q20")
         (draw-string (- qpxs (min pad 15)) (- qpye 2) "Q0"))
-      ;; (draw-string (- qpxs (min pad 15)) (- qpye 12) (format nil "A~D" avg-window))
+      ;; Highlight low-quality region by marking beneath the x-axis
+      (when (plusp llqmar)
+        (do-range ((dy 0 4))
+          (do-range ((x (base->x llqmar-start) (base->x llqmar-end)))
+            (draw x (+ 1 dy qpye) #xCC #x00 #x00))))
+      ;; Quality scores
       (iterate (with qs = (make-array avg-window))
                (for b :from 0)
                (for q :in-vector quality-scores)
@@ -574,39 +630,6 @@
                     :if-exists :supersede)))
 
 
-;;;; Hallucination ------------------------------------------------------------
-(defun compute-llqma (quality-scores &key
-                      (window-size *low-quality-window-size*)
-                      (low-quality-threshold *low-quality-threshold*))
-  "Return the longest stretch of low-quality-moving-average in `quality-scores`."
-  (declare (optimize (speed 3) (space 1) (safety 1) (debug 1)))
-  (check-type quality-scores a8)
-  (check-type low-quality-threshold (integer 1 60))
-  (check-type window-size (integer 1 4096))
-  (iterate
-    (with window-size = *low-quality-window-size*)
-    (with sum = 0)
-    (with sum-threshold = (* window-size low-quality-threshold))
-    (with best = 0)
-    (with run = 0)
-
-    (for q :in-vector quality-scores :with-index i)
-    (incf sum q)
-    (declare (type fixnum q sum sum-threshold run i window-size best))
-
-    (cond ((< i window-size) (next-iteration))
-          ((>= i window-size) (decf sum (aref quality-scores (- i window-size)))))
-
-    (if (<= sum sum-threshold)
-      (incf run)
-      (setf run 0))
-
-    (when (> run best)
-      (setf best run))
-
-    (returning best)))
-
-
 ;;;; Main Entry Point ---------------------------------------------------------
 (defclass* minimera-result ()
   (read-id
@@ -614,48 +637,52 @@
    classification
    monotony
    (foldback-point :initform nil)
-   llqma
+   llqmar
+   (llqmar-start :initform nil)
+   (llqmar-end :initform nil)
    processing-time))
 
 
-(defun process-read (id sequence quality-scores &key (optimized nil))
-  (if optimized
-    (check-type sequence a8)
-    (check-type sequence string))
-  (let* ((read-length (length sequence))
-         (llqma (compute-llqma quality-scores))
-         (m1 (if optimized
-               (minimizers/fast *k* *w* sequence)
-               (minimizers *k* *w* sequence)))
-         (monotony (estimate-monotony m1)))
-    (if (>= monotony *monotony-threshold*)
-      (make-instance 'minimera-result
-        :read-id id
-        :read-length read-length
-        :classification :monotonous
-        :monotony monotony
-        :llqma llqma)
-      (let* ((m2 (if optimized
-                   ;; CAREFUL HERE, this nrev breaks using this function interactively
-                   (minimizers/fast *k* *w* (nreverse-complement-bytes sequence))
-                   (minimizers *k* *w* (reverse-complement sequence))))
-             (hits (hits m1 m2))
-             (clusters (cluster hits))
-             (results (find-foldback-clusters read-length clusters))
-             (result (alexandria:extremum results #'> :key #'cluster-lengths))
-             (classification (if result :foldback :normal))
-             (foldback-position (when result
-                                  (compute-foldback-position result))))
-        (when (or (and results *plot-foldbacks*)
-                  (and (null results) *plot-normal*))
-          (render-minimizers id sequence quality-scores classification foldback-position llqma hits clusters))
+(defun process-read (id sequence quality-scores)
+  (check-type sequence a8)
+  (multiple-value-bind (llqmar llqmar-start llqmar-end)
+      (compute-llqmar quality-scores)
+    (let* ((read-length (length sequence))
+           (m1 (minimizers *k* *w* sequence))
+           (monotony (estimate-monotony m1)))
+      (if (>= monotony *monotony-threshold*)
         (make-instance 'minimera-result
           :read-id id
           :read-length read-length
-          :classification classification
+          :classification :monotonous
           :monotony monotony
-          :llqma llqma
-          :foldback-point foldback-position)))))
+          :llqmar llqmar
+          :llqmar-start llqmar-start
+          :llqmar-end llqmar-end)
+        ;; CAREFUL HERE, this nreverse breaks using this function interactively
+        (let* ((m2 (minimizers *k* *w* (nreverse-complement-bytes sequence)))
+               (hits (hits m1 m2))
+               (clusters (cluster hits))
+               (results (find-foldback-clusters read-length clusters))
+               (result (alexandria:extremum results #'> :key #'cluster-lengths))
+               (classification (if result :foldback :normal))
+               (foldback-position (when result
+                                    (compute-foldback-position result))))
+          (when (or (and results *plot-foldbacks*)
+                    (and (null results) *plot-normal*))
+            (render-minimizers id sequence quality-scores
+                               classification foldback-position
+                               llqmar llqmar-start llqmar-end
+                               hits clusters))
+          (make-instance 'minimera-result
+            :read-id id
+            :read-length read-length
+            :classification classification
+            :monotony monotony
+            :llqmar llqmar
+            :llqmar-start llqmar-start
+            :llqmar-end llqmar-end
+            :foldback-point foldback-position))))))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
@@ -665,7 +692,9 @@
         "classification"
         "monotony"
         "foldback-point"
-        "llqma"
+        "llqmar"
+        "llqmar-start"
+        "llqmar-end"
         "processing-time-microsec"))
 
 
@@ -677,7 +706,9 @@
                             (if (foldback-point result)
                               (princ-to-string (foldback-point result))
                               "")
-                            (princ-to-string (llqma result))
+                            (princ-to-string (llqmar result))
+                            (princ-to-string (or (llqmar-start result) ""))
+                            (princ-to-string (or (llqmar-end result) ""))
                             (princ-to-string (processing-time result)))
                       csv-stream))
 
@@ -692,7 +723,7 @@
          (id (faster:parse-sequence-id (faster:id fastq-read)))
          (seq (faster:seq fastq-read))
          (qs (faster:n-bytes-to-quality-scores (faster:qs fastq-read)))
-         (result (process-read id seq qs :optimized t))
+         (result (process-read id seq qs))
          (end (gettime))
          (processing-time (- end start)))
     (setf (processing-time result) processing-time)

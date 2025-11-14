@@ -1,3 +1,6 @@
+;;; Copyright 2025 Steve Losh and contributors
+;;; SPDX-License-Identifier: GPL-3.0-or-later
+
 (in-package :minimera)
 
 (defun dump-pixels (array)
@@ -102,7 +105,3 @@
 
 
 (defparameter *m5x7* (load-m5x7))
-
-
-
-

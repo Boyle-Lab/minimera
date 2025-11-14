@@ -2,13 +2,40 @@
 
 USAGE: `minimera [OPTIONS] \-\-output=PATH FASTQ`
 
-Minimera is a tool for detecting foldback chimeric reads in Oxford Nanopore data
-using minimizers.
+Minimera is a tool for detecting foldback chimeric and other problematic reads
+in Oxford Nanopore data using minimizers.
 
 Reads will be read from the specified fastq file (or stdin if \- is given) and
 the results written to foldbacks.csv inside the specified output directory.  If
 plots are generated they will be inside a plots/ subdirectory of the output
 directory.
+
+The resulting foldbacks.csv file will contain the following columns:
+
+1. read\-id: the ID of the read
+
+2. read\-length: the length (in base pairs) of the read
+
+3. classification: one of foldback/monotonous/normal
+
+4. monotony: monotony score for the read
+
+5. foldback\-point: estimated position of the foldback point for foldbacks, empty
+otherwise
+
+6. llqma: length of the longest low\-quality moving average run in the read
+
+7. llqma\-start: start of the longest low\-quality moving average run, blank if no
+run exists
+
+8. llqma\-end: end of the longest low\-quality moving average run, blank if no run
+exists
+
+9. processing\-time\-microsec: how long minimera took to process this read
+
+New columns may be added after these in future versions of Minimera, so when
+processing foldbacks.csv make sure to allow extra columns if you want to remain
+forwards compatible.
 
 ## Options
 
@@ -88,7 +115,7 @@ directory.
 
 *   `-L N`, `--low-quality-window-size=N`
 
-    Size of moving average window when computing LLQMA (default: 20).
+    Size of moving average window when computing LLQMA (default: 10).
 
 *   `-Q Q`, `--low-quality-threshold=Q`
 
