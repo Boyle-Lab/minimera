@@ -15,8 +15,10 @@ build/asdf-manifest: Makefile minimera.asd
 
 build/minimera: $(lisps) Makefile build/asdf-manifest
 	mkdir -p build/
+
 	buildapp \
 		--load-system 'minimera' \
+		--eval '(setf minimera::*version* "'"$(shell git describe --dirty)"'")' \
 		--entry 'minimera:toplevel' \
 		--manifest-file 'build/asdf-manifest' \
 		--compress-core \

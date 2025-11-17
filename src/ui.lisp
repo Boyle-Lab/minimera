@@ -4,6 +4,8 @@
 (in-package :minimera)
 
 ;;;; UI -----------------------------------------------------------------------
+(defparameter *version* "unknown")
+
 (adopt:define-string *documentation*
   "Minimera is a tool for detecting foldback chimeric and other problematic ~
    reads in Oxford Nanopore data using minimizers.~@
@@ -48,6 +50,14 @@
     :long "help"
     :short #\h
     :reduce (constantly t)))
+
+(defparameter *o/version*
+  (adopt:make-option 'version
+    :help "Display version and exit."
+    :long "version"
+    :short #\v
+    :reduce (constantly t)))
+
 
 (defparameter *o/threads*
   (adopt:make-option 'threads
@@ -213,6 +223,7 @@
     :examples *examples*
     :contents
     (list *o/help*
+          *o/version*
           *o/threads*
           *o/progress*
           *o/no-progress*
@@ -247,8 +258,11 @@
   (declare (ignore argv)) ; buildapp junk
   (adopt::quit-on-ctrl-c ()
     (multiple-value-bind (arguments options) (adopt:parse-options-or-exit *ui*)
-      (when (gethash 'help options)
-        (adopt:print-help-and-exit *ui*))
+      (cond ((gethash 'help options)
+             (adopt:print-help-and-exit *ui*))
+            ((gethash 'version options)
+             (format t "minimera ~A~%" *version*)
+             (adopt:exit)))
       (setf
         *interactive* nil
         *worker-threads* (gethash 'threads options)
