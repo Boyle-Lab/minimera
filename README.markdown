@@ -12,15 +12,23 @@
 * **License:** [GPLv3 or later](https://www.gnu.org/licenses/gpl-3.0.html)
 * **Git:** <https://github.com/Boyle-Lab/minimera/>
 
-Check the [man page][] for information about the command-line `minimera` interface.
+Check the [man page][] for information about the command-line `minimera`
+interface.
 
 [man page]: https://github.com/Boyle-Lab/minimera/blob/main/DOCUMENTATION.markdown
+
+## Installation
+
+We provide [releases][] of Minimera as binaries (Linux AMD64 only) and
+Singularity containers.
+
+[releases]: https://github.com/Boyle-Lab/minimera/releases
 
 ## Building
 
 If you just want to *use* Minimera you don't need to build it from scratch.  You
-can grab the latest binary from the releases page and don't need to worry about
-any of this.
+can grab the latest binary or Singularity container from the releases page and
+don't need to worry about any of this.
 
 If you want to build Minimera from scratch (e.g. to modify it), here are some
 rough notes to get you started.  You should be at least a little familiar with
