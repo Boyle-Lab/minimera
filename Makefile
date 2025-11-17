@@ -26,6 +26,9 @@ build/minimera.1: $(lisps) Makefile
 	mkdir -p build/
 	sbcl --disable-debugger --load "src/build-manual.lisp" --quit
 
+build/minimera.sif: build/minimera build/minimera.1 contrib/minimera.def
+	singularity build --fakeroot build/minimera.sif contrib/minimera.def
+
 clean:
 	rm build/minimera*
 	rm build/asdf-manifest

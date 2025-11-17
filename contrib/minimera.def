@@ -1,0 +1,14 @@
+Bootstrap: docker
+From: debian:bookworm-slim
+
+%files
+    ./build/minimera /minimera
+    ./build/minimera.1 /minimera.1
+
+%post
+    ln -s /minimera /usr/local/bin/
+    mkdir -p /usr/local/share/man/man1
+    ln -s /minimera.1 /usr/local/share/man/man1/
+
+%runscript
+    exec minimera "$@"
