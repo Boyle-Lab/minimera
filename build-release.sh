@@ -2,16 +2,33 @@
 
 set -euo pipefail
 
-V="$(git describe --dirty)"
-
+# Prep ------------------------------------------------------------------------
+version="$(git describe --dirty)"
 
 cd build
 
-mkdir -p minimera-"${V}"
+# Release directory -----------------------------------------------------------
+release_dir="minimera-${version}"
 
-tar -czf \
-    minimera-"${V}"/minimera-"${V}"-linux-amd64.tar.gz \
-    -- \
-    minimera minimera.1
+mkdir -p "${release_dir}"
+cd "${release_dir}"
 
-cp minimera.sif minimera-"${V}"/minimera-"${V}".sif
+# Linux binaries --------------------------------------------------------------
+binary_dir="minimera-${version}-linux-amd64"
+binary_tar="${binary_dir}.tar.gz"
+
+mkdir -p ./"${binary_dir}"
+
+cp -t ./"${binary_dir}" \
+    ../../LICENSE \
+    ../minimera \
+    ../minimera.1
+
+tar -czf "${binary_tar}" ./"${binary_dir}"
+
+rm -r ./"${binary_dir}"
+
+# Singularity container -------------------------------------------------------
+container="minimera-${version}.sif"
+
+cp ../minimera.sif "${container}"
