@@ -43,6 +43,10 @@ forwards compatible.
 
     Display help and exit.
 
+*   `-v`, `--version`
+
+    Display version and exit.
+
 *   `-j N`, `--threads=N`
 
     Number of worker threads to spawn. Does not include the reader and writer
