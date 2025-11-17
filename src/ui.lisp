@@ -243,7 +243,8 @@
                            *o/plot/no-normal*)))))
 
 
-(defun toplevel ()
+(defun toplevel (&optional argv)
+  (declare (ignore argv)) ; buildapp junk
   (adopt::quit-on-ctrl-c ()
     (multiple-value-bind (arguments options) (adopt:parse-options-or-exit *ui*)
       (when (gethash 'help options)
@@ -294,7 +295,3 @@
             (run (first arguments)))
         (error (e)
                (adopt:print-error-and-exit e))))))
-
-#; Scratch --------------------------------------------------------------------
-
-(adopt::print-manual/md *ui* :width 50)

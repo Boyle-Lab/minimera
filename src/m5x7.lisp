@@ -30,7 +30,7 @@
     result))
 
 (defun load-m5x7 ()
-  (load-font "src/m5x7.pbm" 9
+  (load-font (asdf:system-relative-pathname :minimera "src/m5x7.pbm") 9
              '(#\space 0 0 4)
              '(#\a   3  8 5)
              '(#\A   9  8 5)
