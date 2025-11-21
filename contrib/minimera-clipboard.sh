@@ -40,7 +40,8 @@ id=$(read_id)
 minimera <(clean_fastq) \
     --output "$scratch" \
     --plot-foldbacks \
-    --plot-normal
+    --plot-normal \
+    "$@"
 
 cp  "$scratch"/plots/"$id".png \
     "$scratch"/plots/scratch.png

@@ -23,9 +23,10 @@
     (dolist (glyph glyphs)
       (destructuring-bind (char x y w &optional (h h)) glyph
         (let ((pixels (subarr data x y w h)))
-          ;; (terpri)
-          ;; (pr char)
-          ;; (dump-pixels pixels)
+          ;; (when (position char "<>")
+          ;;   (terpri)
+          ;;   (pr char)
+          ;;   (dump-pixels pixels))
           (setf (gethash char result) pixels))))
     result))
 
@@ -95,13 +96,18 @@
              '(#\8  50 42 5)
              '(#\9  56 42 5)
              '(#\=  51 112 4)
-             '(#\.  39 77 1)
-             '(#\,  27 77 2)
+             '(#\.  39 76 1)
+             '(#\,  27 76 2)
+             '(#\;  51 76 2)
+             '(#\:  63 76 1)
              '(#\+  3 112 5)
              '(#\-  15 112 5)
              '(#\(  3 88 2)
              '(#\)  15 88 2)
+             '(#\<  75 88 3)
+             '(#\>  87 88 3)
              ))
 
 
 (defparameter *m5x7* (load-m5x7))
+

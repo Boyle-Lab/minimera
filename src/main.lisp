@@ -14,7 +14,8 @@
 (defparameter *minimum-foldback-length-absolute* 50)
 (defparameter *minimum-foldback-length-relative* 0.05)
 
-(defparameter *monotony-threshold* 0.80)
+(defparameter *monotony-threshold* 0.50)
+(defparameter *minimum-qscore* 9.0)
 
 (defparameter *plot-foldbacks* nil)
 (defparameter *plot-normal* nil)
@@ -168,10 +169,24 @@
   (print-unreadable-object (o s :type t)
     (format s "~D ~D ~D" (hit-c o) (hit-l1 o) (hit-l2 o))))
 
-(define-sorting-predicate hit<
-  (#'< :key #'hit-c)
-  (#'> :key #'hit-l2)
-  (#'< :key #'hit-l1))
+(defun hit< (a b)
+  (declare (optimize (speed 3) (safety 1) (debug 1)))
+  (check-type a hit)
+  (check-type b hit)
+  ;; ordering hierarchy is (< c) (> l2) (< l1)
+  (let ((x (hit-c a))
+        (y (hit-c b)))
+    (cond ((< x y) t)
+          ((< y x) nil)
+          (t (let ((x (hit-l2 a))
+                   (y (hit-l2 b)))
+               (cond ((> x y) t)
+                     ((> y x) nil)
+                     (t (let ((x (hit-l1 a))
+                              (y (hit-l1 b)))
+                          (cond ((< x y) t)
+                                ((< y x) nil)
+                                (t nil))))))))))
 
 (defun hits (ms1 ms2)
   "Return a vector of matching minimizer hits from sketches `ms1` and `ms2`.
@@ -214,14 +229,57 @@
       (collect (subseq cluster start next-i))
       (setf start next-i))))
 
+
+(defun longest-increasing-subsequence (cluster)
+  "Return the longest increasing subsequence of hits in `cluster`."
+  (declare (optimize (speed 3) (safety 1) (debug 1))
+           (type (simple-array hit (*)) cluster))
+  ;; Used https://github.com/privet-kitty/cl-competitive/blob/master/module/lis.lisp
+  ;; as a starting point, which is public domain and implements the LIS algorithm
+  ;; described at https://en.wikipedia.org/wiki/Longest_increasing_subsequence#Efficient_algorithms
+  ;; for speed, because profiling showed that a naive implementation using
+  ;; Patience Sort from Rosetta code was the performance bottleneck.
+  (let* ((n (length cluster))
+         (dp (make-array (+ 1 n)
+               :element-type 'fixnum
+               :initial-element most-positive-fixnum))
+         (end 0))
+    (declare ((integer 0 #.array-dimension-limit) end))
+    (labels ((bisect (ng ok value)
+               (declare (type (integer -1 #.array-dimension-limit) ng ok)
+                        (type fixnum value))
+               (if (<= (- ok ng) 1)
+                 ok
+                 (let ((mid (ash (+ ng ok) -1)))
+                   (if (< (aref dp mid) value)
+                     (bisect mid ok value)
+                     (bisect ng mid value))))))
+      (let ((prevs (make-array n :element-type 'fixnum :initial-element -1))
+            (indices (make-array n :element-type '(integer 0 #.most-positive-fixnum))))
+        (loop :for i :below n
+              :for val = (hit-l2 (aref cluster i))
+              :for pos = (bisect -1 end val)
+              :do (progn (setf (aref dp pos) val
+                               (aref indices pos) i)
+                         (unless (zerop pos)
+                           (setf (aref prevs i)
+                                 (aref indices (- pos 1))))
+                         (when (= end pos)
+                           (incf end))))
+        (let ((result (make-array end)))
+          (unless (zerop end)
+            (loop :with index = (aref indices (- end 1))
+                  :for i :from (- end 1) :downto 0
+                  :do (setf (aref result i) (aref cluster index)
+                            index (aref prevs index))))
+          result)))))
+
 (defun filter-clusters (clusters)
   "Return a list of clusters, with gaps broken and small clusters removed."
   (let* ((min-length *minimum-cluster-length*)
          (deduped (mapcar (lambda (cluster)
                             (longest-increasing-subsequence
-                              (sort cluster #'< :key #'hit-l1)
-                              :key #'hit-l2
-                              :result-type 'vector))
+                              (sort cluster #'< :key #'hit-l1)))
                           clusters))
          (degapped (alexandria:mappend #'break-gaps deduped))
          (results (remove-if (lambda (cluster)
@@ -328,7 +386,7 @@
   ;; Q = -10 * log10(P)
   (* -10.0d0 (log p 10.0d0)))
 
-(defun mean-qscore (qs)
+(defun compute-mean-qscore (qs)
   ;; Compute this in probability space.  Q scores are logarithmic so averaging
   ;; them doesn't make much sense.
   (if (zerop (length qs))
@@ -339,10 +397,10 @@
                     (length qs)))
            0.0d0)))
 
-(defun compute-llqmar (quality-scores &key
-                       (window-size *low-quality-window-size*)
-                       (low-quality-threshold *low-quality-threshold*))
-  "Return the longest stretch of low-quality-moving-average in `quality-scores`."
+(defun compute-llqr (quality-scores &key
+                     (window-size *low-quality-window-size*)
+                     (low-quality-threshold *low-quality-threshold*))
+  "Return the longest low-quality region in `quality-scores`."
   (declare (optimize (speed 3) (space 1) (safety 1) (debug 1)))
   (check-type quality-scores a8)
   (check-type low-quality-threshold (integer 1 60))
@@ -470,8 +528,14 @@
 ;; w = width
 ;; h = height
 
-(defun render-minimizers (id sequence quality-scores classification foldback-point llqmar llqmar-start llqmar-end hits clusters)
-  (let* ((size 512)
+(defun render-minimizers (sequence quality-scores result)
+  (let* ((has-minimizers (not (slot-boundp result 'skip-reasons)))
+         (foldback-point (foldback-point result))
+         (id (read-id result))
+         (llqr (llqr result))
+         (llqr-start (llqr-start result))
+         (llqr-end (llqr-end result))
+         (size 512)
          (pad 26)
          (pad/2 (truncate pad 2))
          ;; Always using the llqma window size results in too many pixels drawn
@@ -479,25 +543,27 @@
          (avg-window (max *low-quality-window-size*
                           (truncate (length sequence) 200)))
          (w size)
-         (mpw (- size (* 2 pad)))
-         (mph (- size (* 2 pad)))
-         (qpw (- size (* 2 pad)))
-         (qph (truncate size 10))
-         (tix 5)
+         (tix 5) ; title
          (tiy 5)
+         (mpw (- size (* 2 pad))) ; minimizer plot
+         (mph (- size (* 2 pad)))
          (mpx pad)
          (mpxs (+ mpx 0))
          (mpxe (+ mpx mpw))
          (mpy pad)
          (mpys (+ mpy 0))
          (mpye (+ mpy mph))
+         (msx (truncate w 2)) ; minimizers skipped message
+         (msy (+ mpys (truncate (- mpye mpys) 2)))
+         (qpw (- size (* 2 pad))) ; quality plot
+         (qph (truncate size 10))
          (qpx pad)
          (qpxs (+ qpx 0))
          (qpxe (+ qpx qpw))
          (qpy (+ mph (* 2 pad)))
          (qpys (+ qpy 0))
          (qpye (+ qpy qph))
-         (lgh pad)
+         (lgh pad) ; legend
          (h (+ pad mph pad qph pad/2 lgh))
          (lg1x 5)
          (lg1y (- h pad))
@@ -509,7 +575,8 @@
                 :height h))
          (img (zpng:data-array png))
          (len (length sequence))
-         (idx (index-hits clusters))
+         (idx (when has-minimizers
+                (index-hits (foldback-clusters result))))
          (pp 1)
          (pixels-per-base (/ mpw len))
          (tic-bases (choose-tics sequence))
@@ -544,6 +611,13 @@
                (draw x (- y pp) r g b)
                (draw x (+ y pp) r g b)
                (draw x y r g b))
+             (char-width (char)
+               (let ((pixels (gethash char *m5x7*)))
+                 (assert pixels () "No glyph available for ~S" char)
+                 (array-dimension pixels 0)))
+             (string-width (string)
+               (+ (1- (length string))
+                  (summation string :key #'char-width)))
              (draw-char (x y char)
                (let ((pixels (gethash char *m5x7*)))
                  (assert pixels () "No glyph available for ~S" char)
@@ -553,65 +627,86 @@
                        (when (plusp (aref pixels dx dy))
                          (draw (+ x dx) (+ y dy) #x00))))
                    width)))
-             (draw-string (x y string)
+             (draw-string (x y string &key centered)
+               (when centered
+                 (decf x (truncate (string-width string) 2)))
                (iterate
                  (for char :in-string string)
                  (for w = (draw-char x y char))
                  (incf x (1+ w)))))
       ;; Title
-      (draw-string tix tiy (format nil "Read ~A (~A)" id (string-downcase classification)))
+      (draw-string tix tiy (format nil "Read ~A (~A)"
+                                   id (string-downcase (classification result))))
       ;; Legend
       (draw-string lg1x lg1y (format nil "tics = ~:Dbp, read length = ~:D, ~A"
                                      tic-bases len
                                      (if foldback-point
                                        (format nil "foldback point = ~:D" foldback-point)
                                        "no foldback detected")))
-      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqmar = ~D"
-                                     (mean-qscore quality-scores)
-                                     llqmar))
-      ;; X/Y axes and tic marks
-      (do-range ((x mpxs mpxe)) (draw x mpye #x66))
-      (do-range ((y mpys mpye)) (draw mpxs y #x66))
-      (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
-               (loop :for ty :from mpye
-                     :repeat tic-length
-                     :do (draw tx ty #x66)))
-      (iterate (for ty :from (- mpye tic-width) :downto mpxs :by tic-width) ; ytics
-               (loop :for tx :downfrom mpxs
-                     :repeat tic-length
-                     :do (draw tx ty #x66)))
-      ; Draw dashed line at foldback point
-      (when foldback-point
-        (iterate (with x = (base->x foldback-point))
-                 (for y :from mpys :to mpye :by 4)
-                 (draw x y      #xBF #xB0 #x86)
-                 (draw x (1+ y) #xBF #xB0 #x86)))
-      ;; Unclustered hits
-      (doseq (hit hits)
-        (let ((cluster (gethash hit idx)))
-          (unless cluster
-            (draw-unclustered-point (hit-y hit) (hit-x hit)))))
-      ;; Clustered hits
-      (doseq (hit hits)
-        (let ((cluster (gethash hit idx)))
-          (when cluster
-            (multiple-value-call #'draw-point
-              (hit-y hit) (hit-x hit) (cluster-color cluster)))))
+      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqr = ~D, monotony = ~,2F"
+                                     (mean-qscore result)
+                                     llqr
+                                     (monotony result)))
+      (if (not has-minimizers)
+        (let ((y msy))
+          (draw-string msx y "Minimizer computation skipped due to:" :centered t)
+          (incf y 13)
+          (when (member :monotony (skip-reasons result))
+            (draw-string msx y (format nil "High monotony (~,2F >= ~,2F)"
+                                       (monotony result) *monotony-threshold*)
+                         :centered t)
+            (incf y 13))
+          (when (member :qscore (skip-reasons result))
+            (draw-string msx y (format nil "Low mean Q score (~,1F < ~,1F)"
+                                       (mean-qscore result) *minimum-qscore*)
+                         :centered t)
+            (incf y 13)))
+        (progn
+          ;; X/Y axes and tic marks
+          (do-range ((x mpxs mpxe)) (draw x mpye #x66))
+          (do-range ((y mpys mpye)) (draw mpxs y #x66))
+          (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
+                   (loop :for ty :from mpye
+                         :repeat tic-length
+                         :do (draw tx ty #x66)))
+          (iterate (for ty :from (- mpye tic-width) :downto mpxs :by tic-width) ; ytics
+                   (loop :for tx :downfrom mpxs
+                         :repeat tic-length
+                         :do (draw tx ty #x66)))
+          ;; Draw dashed line at foldback point
+          (when foldback-point
+            (iterate (with x = (base->x foldback-point))
+                     (for y :from mpys :to mpye :by 4)
+                     (draw x y      #xBF #xB0 #x86)
+                     (draw x (1+ y) #xBF #xB0 #x86)))
+
+          ;; Unclustered hits
+          (doseq (hit (foldback-hits result))
+            (let ((cluster (gethash hit idx)))
+              (unless cluster
+                (draw-unclustered-point (hit-y hit) (hit-x hit)))))
+          ;; Clustered hits
+          (doseq (hit (foldback-hits result))
+            (let ((cluster (gethash hit idx)))
+              (when cluster
+                (multiple-value-call #'draw-point
+                  (hit-y hit) (hit-x hit) (cluster-color cluster)))))))
       ;; Quality scores labels
       (let ((q20y (quality->y 20))
             (lqy (quality->y *low-quality-threshold*)))
         (do-range ((x qpxs qpxe))
           (draw x (1- qpys) #xCC)
-          (draw x (1+ qpye) #xCC)
+          (draw x (1+ qpye) #xCC))
+        (do-range ((x (1- qpxs) (1+ qpxe)))
           (draw x q20y #x00 #xAA #x00)
           (draw x lqy #xAA #x00 #x00))
         (draw-string (- qpxs (min pad 20)) (- qpys 4) "Q50")
         (draw-string (- qpxs (min pad 20)) (- q20y 3) "Q20")
         (draw-string (- qpxs (min pad 15)) (- qpye 2) "Q0"))
       ;; Highlight low-quality region by marking beneath the x-axis
-      (when (plusp llqmar)
+      (when (plusp llqr)
         (do-range ((dy 0 4))
-          (do-range ((x (base->x llqmar-start) (base->x llqmar-end)))
+          (do-range ((x (base->x llqr-start) (base->x llqr-end)))
             (draw x (+ 1 dy qpye) #xCC #x00 #x00))))
       ;; Quality scores
       (iterate (with qs = (make-array avg-window))
@@ -636,29 +731,44 @@
    read-length
    classification
    monotony
+   mean-qscore
+   skip-reasons
    (foldback-point :initform nil)
-   llqmar
-   (llqmar-start :initform nil)
-   (llqmar-end :initform nil)
+   foldback-hits
+   foldback-clusters
+   llqr
+   (llqr-start :initform nil)
+   (llqr-end :initform nil)
    processing-time))
 
+(defun foldbackp (result)
+  (eql (classification result) :foldback))
 
-(defun process-read (id sequence quality-scores)
+
+(defun process-read% (id sequence quality-scores)
   (check-type sequence a8)
-  (multiple-value-bind (llqmar llqmar-start llqmar-end)
-      (compute-llqmar quality-scores)
+  (multiple-value-bind (llqr llqr-start llqr-end)
+      (compute-llqr quality-scores)
     (let* ((read-length (length sequence))
            (m1 (minimizers *k* *w* sequence))
-           (monotony (estimate-monotony m1)))
-      (if (>= monotony *monotony-threshold*)
+           (monotony (estimate-monotony m1))
+           (mean-qscore (compute-mean-qscore quality-scores))
+           (skip-reasons (list)))
+      (when (>= monotony *monotony-threshold*)
+        (push :monotony skip-reasons))
+      (when (< mean-qscore *minimum-qscore*)
+        (push :qscore skip-reasons))
+      (if skip-reasons
         (make-instance 'minimera-result
           :read-id id
           :read-length read-length
-          :classification :monotonous
+          :classification :failed
           :monotony monotony
-          :llqmar llqmar
-          :llqmar-start llqmar-start
-          :llqmar-end llqmar-end)
+          :mean-qscore mean-qscore
+          :skip-reasons skip-reasons
+          :llqr llqr
+          :llqr-start llqr-start
+          :llqr-end llqr-end)
         ;; CAREFUL HERE, this nreverse breaks using this function interactively
         (let* ((m2 (minimizers *k* *w* (nreverse-complement-bytes sequence)))
                (hits (hits m1 m2))
@@ -668,21 +778,26 @@
                (classification (if result :foldback :normal))
                (foldback-position (when result
                                     (compute-foldback-position result))))
-          (when (or (and results *plot-foldbacks*)
-                    (and (null results) *plot-normal*))
-            (render-minimizers id sequence quality-scores
-                               classification foldback-position
-                               llqmar llqmar-start llqmar-end
-                               hits clusters))
           (make-instance 'minimera-result
             :read-id id
             :read-length read-length
             :classification classification
             :monotony monotony
-            :llqmar llqmar
-            :llqmar-start llqmar-start
-            :llqmar-end llqmar-end
-            :foldback-point foldback-position))))))
+            :mean-qscore mean-qscore
+            :llqr llqr
+            :llqr-start llqr-start
+            :llqr-end llqr-end
+            :foldback-point foldback-position
+            :foldback-hits hits
+            :foldback-clusters clusters))))))
+
+(defun process-read (id sequence quality-scores)
+  (let ((result (process-read% id sequence quality-scores)))
+    (when (if (foldbackp result)
+            *plot-foldbacks*
+            *plot-normal*)
+      (render-minimizers sequence quality-scores result))
+    result))
 
 
 ;;;; Toplevel -----------------------------------------------------------------
@@ -692,9 +807,9 @@
         "classification"
         "monotony"
         "foldback-point"
-        "llqmar"
-        "llqmar-start"
-        "llqmar-end"
+        "llqr"
+        "llqr-start"
+        "llqr-end"
         "processing-time-microsec"))
 
 
@@ -706,9 +821,9 @@
                             (if (foldback-point result)
                               (princ-to-string (foldback-point result))
                               "")
-                            (princ-to-string (llqmar result))
-                            (princ-to-string (or (llqmar-start result) ""))
-                            (princ-to-string (or (llqmar-end result) ""))
+                            (princ-to-string (llqr result))
+                            (princ-to-string (or (llqr-start result) ""))
+                            (princ-to-string (or (llqr-end result) ""))
                             (princ-to-string (processing-time result)))
                       csv-stream))
 
@@ -741,4 +856,5 @@
                 :output-function (curry #'output% csv-stream)
                 :interactive *interactive*
                 :report-progress *report-progress*
-                :worker-threads *worker-threads*)))
+                :worker-threads *worker-threads*
+                :queue-size (* 10 *worker-threads*))))

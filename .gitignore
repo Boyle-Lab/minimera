@@ -8,4 +8,4 @@ venv
 *.fastq
 *.png
 *.pdf
-*.prof
+lisp.prof*

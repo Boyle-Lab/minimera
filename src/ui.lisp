@@ -30,11 +30,11 @@
    ~@
    5. foldback-point: estimated position of the foldback point for foldbacks, empty otherwise~@
    ~@
-   6. llqma: length of the longest low-quality moving average run in the read~@
+   6. llq: length of the longest low-quality region in the read~@
    ~@
-   7. llqma-start: start of the longest low-quality moving average run, blank if no run exists~@
+   7. llq-start: start of the longest low-quality region, blank if none exists~@
    ~@
-   8. llqma-end: end of the longest low-quality moving average run, blank if no run exists~@
+   8. llq-end: end of the longest low-quality region, blank if none exists~@
    ~@
    9. processing-time-microsec: how long minimera took to process this read~@
    ~@
@@ -89,7 +89,7 @@
 
 (defparameter *o/w*
   (adopt:make-option 'w
-    :help "Size (total) of windows (in base pairs) to use for minimizer sketches (default: 16)."
+    :help "Total size of windows (in base pairs) to use for minimizer sketches (default: 16)."
     :long "window-size"
     :short #\W
     :parameter "N"
@@ -101,7 +101,6 @@
   (adopt:make-option 'foldback-position-epsilon
     :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 50)."
     :long "foldback-position-epsilon"
-    :short #\F
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 50
@@ -111,7 +110,6 @@
   (adopt:make-option 'intercept-epsilon
     :help "Epsilon (in y-intercept space) used to cluster colinear points during the initial clustering step (default: 30)."
     :long "intercept-epsilon"
-    :short #\I
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 30
@@ -121,7 +119,6 @@
   (adopt:make-option 'gap-epsilon
     :help "Maximum width (in y-intercept space) of an allowable gap in a cluster.  Gaps wider than this will result in splitting the cluster (default: 300)."
     :long "gap-epsilon"
-    :short #\G
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 300
@@ -131,7 +128,6 @@
   (adopt:make-option 'minimum-cluster-length
     :help "Minimum number of allowable points in a cluster.  Clusters with fewer than this many hits will be removed (default: 40)."
     :long "minimum-cluster-length"
-    :short #\C
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 40
@@ -141,7 +137,6 @@
   (adopt:make-option 'minimum-foldback-length-absolute
     :help "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded (default: 50)."
     :long "minimum-foldback-length-absolute"
-    :short #\A
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 50
@@ -151,7 +146,6 @@
   (adopt:make-option 'minimum-foldback-length-relative
     :help "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded (default: 0.05)."
     :long "minimum-foldback-length-relative"
-    :short #\R
     :parameter "X"
     :reduce #'adopt:last
     :initial-value 0.05
@@ -159,19 +153,26 @@
 
 (defparameter *o/monotony-threshold*
   (adopt:make-option 'monotony-threshold
-    :help "Monotony score above which reads will be classified as monotonous and not analyzed for foldback finding (default: 0.80)."
+    :help "Monotony score above which reads will be classified as failed and not analyzed for foldback finding (default: 0.50)."
     :long "monotony-threshold"
-    :short #\M
     :parameter "X"
     :reduce #'adopt:last
-    :initial-value 0.80
+    :initial-value 0.50
+    :key #'parse-float:parse-float))
+
+(defparameter *o/min-qscore*
+  (adopt:make-option 'min-qscore
+    :help "Minimum mean Q-score, reads with a mean Q-score less than this will be classified as failed and not analyzed for foldback finding (default: 9.0)."
+    :long "min-qscore"
+    :parameter "Q"
+    :reduce #'adopt:last
+    :initial-value 9.0
     :key #'parse-float:parse-float))
 
 (defparameter *o/low-quality-threshold*
   (adopt:make-option 'low-quality-threshold
-    :help "Threshold (inclusive) for low-quality Phred scores when computing LLQMA (default: 3)."
+    :help "Threshold (inclusive) for low-quality Q-scores when computing LLQR (default: 3)."
     :long "low-quality-threshold"
-    :short #\Q
     :parameter "Q"
     :reduce #'adopt:last
     :initial-value 3
@@ -179,9 +180,8 @@
 
 (defparameter *o/low-quality-window-size*
   (adopt:make-option 'low-quality-window-size
-    :help "Size of moving average window when computing LLQMA (default: 10)."
+    :help "Size of moving average window when computing LLQR (default: 10)."
     :long "low-quality-window-size"
-    :short #\L
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 10
@@ -190,14 +190,14 @@
 (adopt:defparameters (*o/plot/foldbacks* *o/plot/no-foldbacks*)
   (adopt:make-boolean-options 'plot-foldbacks
     :long "plot-foldbacks"
-    :help "Generate plots for all reads determined to be foldbacks."
-    :help-no "Do not generate plots for reads determined to be foldbacks (the default)."))
+    :help "Generate plots for all reads classified as foldbacks."
+    :help-no "Do not generate plots for reads classified as foldbacks (the default)."))
 
 (adopt:defparameters (*o/plot/normal* *o/plot/no-normal*)
   (adopt:make-boolean-options 'plot-normal
     :long "plot-normal"
-    :help "Generate plots for all reads determined to be normal."
-    :help-no "Do not generate plots for reads determined to be normal (the default)."))
+    :help "Generate plots for all non-foldback reads."
+    :help-no "Do not generate plots for non-foldback reads (the default)."))
 
 (adopt:defparameters (*o/progress* *o/no-progress*)
   (adopt:make-boolean-options 'progress
@@ -217,19 +217,25 @@
   (adopt:make-interface
     :name "minimera"
     :usage "[OPTIONS] --output=PATH FASTQ"
-    :summary "detect foldback chimeric reads using minimizers"
+    :summary "detect foldback chimeric reads (and other artifacts) using minimizers"
     :help *documentation*
     :manual *manual*
     :examples *examples*
     :contents
     (list *o/help*
           *o/version*
+          *o/output-directory*
           *o/threads*
           *o/progress*
           *o/no-progress*
-          *o/output-directory*
+          (adopt:make-group 'filtering
+            :title "Filtering Options"
+            :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers."
+            :options (list *o/min-qscore*
+                           *o/monotony-threshold*))
           (adopt:make-group 'foldback
             :title "Foldback Options"
+            :help "For reads that have passed basic quality checks, Minimera will classify them as normal or foldback chimeric reads."
             :options (list *o/k*
                            *o/w*
                            *o/foldback-position-epsilon*
@@ -238,11 +244,9 @@
                            *o/minimum-cluster-length*
                            *o/minimum-foldback-length-absolute*
                            *o/minimum-foldback-length-relative*))
-          (adopt:make-group 'monotony
-            :title "Monotony Options"
-            :options (list *o/monotony-threshold*))
-          (adopt:make-group 'llqma
-            :title "Low Quality Moving Average Options"
+          (adopt:make-group 'llqr
+            :title "Low Quality Region Options"
+            :help "Minimera computes the longest low-quality region (if any) of each read."
             :options (list *o/low-quality-window-size*
                            *o/low-quality-threshold*))
           (adopt:make-group 'plotting
@@ -259,7 +263,7 @@
   (adopt::quit-on-ctrl-c ()
     (multiple-value-bind (arguments options) (adopt:parse-options-or-exit *ui*)
       (cond ((gethash 'help options)
-             (adopt:print-help-and-exit *ui*))
+             (adopt:print-help-and-exit *ui* :option-width 21))
             ((gethash 'version options)
              (format t "minimera ~A~%" *version*)
              (adopt:exit)))
@@ -275,6 +279,7 @@
         *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
         *monotony-threshold* (gethash 'monotony-threshold options)
+        *minimum-qscore* (gethash 'min-qscore options)
         *low-quality-threshold* (gethash 'low-quality-threshold options)
         *low-quality-window-size* (gethash 'low-quality-window-size options)
         *plot-foldbacks* (gethash 'plot-foldbacks options)
@@ -306,6 +311,8 @@
               "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
             (assert (<= 0.0 *monotony-threshold* 1.0) ()
               "Monotony threshold (~A) must be in the range [0, 1]." *monotony-threshold*)
+            (assert (<= 0.0 *minimum-qscore* 60.0) ()
+              "Minimum Q-score (~A) must be in the range [0, 60]." *minimum-qscore*)
             (run (first arguments)))
         (error (e)
                (adopt:print-error-and-exit e))))))
