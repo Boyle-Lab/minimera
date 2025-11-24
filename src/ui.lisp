@@ -30,13 +30,15 @@
    ~@
    5. foldback-point: estimated position of the foldback point for foldbacks, empty otherwise~@
    ~@
-   6. llq: length of the longest low-quality region in the read~@
+   6. mean-qscore: the mean Q-score of the read~@
    ~@
-   7. llq-start: start of the longest low-quality region, blank if none exists~@
+   7. llqr: length of the longest low-quality region in the read~@
    ~@
-   8. llq-end: end of the longest low-quality region, blank if none exists~@
+   8. llqr-start: start of the longest low-quality region, blank if none exists~@
    ~@
-   9. processing-time-microsec: how long minimera took to process this read~@
+   9. llqr-end: end of the longest low-quality region, blank if none exists~@
+   ~@
+   10. processing-time-microsec: how long minimera took to process this read~@
    ~@
    New columns may be added after these in future versions of Minimera, so when ~
    processing foldbacks.csv make sure to allow extra columns if you want to ~
@@ -81,7 +83,7 @@
   (adopt:make-option 'k
     :help "Size of kmers (in base pairs) to use for minimizers (default: 8)."
     :long "kmer-size"
-    :short #\K
+    :short #\k
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 8
@@ -91,7 +93,7 @@
   (adopt:make-option 'w
     :help "Total size of windows (in base pairs) to use for minimizer sketches (default: 16)."
     :long "window-size"
-    :short #\W
+    :short #\w
     :parameter "N"
     :reduce #'adopt:last
     :initial-value 16
@@ -169,6 +171,14 @@
     :initial-value 9.0
     :key #'parse-float:parse-float))
 
+(adopt:defparameters (*o/simple-mean-qscore* *o/dorado-mean-qscore*)
+  (adopt:make-boolean-options 'dorado-mean-qscore
+    :long "dorado-mean-qscore"
+    :long-no "simple-mean-qscore"
+    :help "Compute mean Q-score using the same method as Dorado (i.e. dropping the first 60 bases first)."
+    :help-no "Compute mean Q-score as a simple mean of Q-score probabilities (the default)."
+    :initial-value nil))
+
 (defparameter *o/low-quality-threshold*
   (adopt:make-option 'low-quality-threshold
     :help "Threshold (inclusive) for low-quality Q-scores when computing LLQR (default: 3)."
@@ -232,6 +242,8 @@
             :title "Filtering Options"
             :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers."
             :options (list *o/min-qscore*
+                           *o/simple-mean-qscore*
+                           *o/dorado-mean-qscore*
                            *o/monotony-threshold*))
           (adopt:make-group 'foldback
             :title "Foldback Options"
@@ -280,7 +292,7 @@
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
         *monotony-threshold* (gethash 'monotony-threshold options)
         *minimum-qscore* (gethash 'min-qscore options)
-        *low-quality-threshold* (gethash 'low-quality-threshold options)
+        *dorado-mean-qscore* (gethash 'dorado-mean-qscore options) *low-quality-threshold* (gethash 'low-quality-threshold options)
         *low-quality-window-size* (gethash 'low-quality-window-size options)
         *plot-foldbacks* (gethash 'plot-foldbacks options)
         *plot-normal* (gethash 'plot-normal options)

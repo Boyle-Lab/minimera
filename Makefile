@@ -22,7 +22,7 @@ build/minimera.1: $(lisps) Makefile
 
 build/minimera.sif: build/minimera build/minimera.1 contrib/minimera.def
 	mkdir -p build/
-	singularity build --fakeroot build/minimera.sif contrib/minimera.def
+	singularity build --force --fakeroot build/minimera.sif contrib/minimera.def
 
 
 # Releases --------------------------------------------------------------------

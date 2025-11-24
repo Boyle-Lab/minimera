@@ -16,6 +16,7 @@
 
 (defparameter *monotony-threshold* 0.50)
 (defparameter *minimum-qscore* 9.0)
+(defparameter *dorado-mean-qscore* nil)
 
 (defparameter *plot-foldbacks* nil)
 (defparameter *plot-normal* nil)
@@ -386,16 +387,15 @@
   ;; Q = -10 * log10(P)
   (* -10.0d0 (log p 10.0d0)))
 
-(defun compute-mean-qscore (qs)
+(defun compute-mean-qscore (qs &aux (len (length qs)))
   ;; Compute this in probability space.  Q scores are logarithmic so averaging
   ;; them doesn't make much sense.
-  (if (zerop (length qs))
+  (if (zerop len)
     0.0d0
-    (float (p->q (/ (loop :for q :across qs
-                          :for p = (q->p q)
-                          :summing p)
-                    (length qs)))
-           0.0d0)))
+      (let ((truncate-read (and *dorado-mean-qscore* (> len 60))))
+        (float (p->q (/ (reduce #'+ qs :start (if truncate-read 60 0) :key #'q->p)
+                        (if truncate-read (- len 60) len)))
+               0.0d0))))
 
 (defun compute-llqr (quality-scores &key
                      (window-size *low-quality-window-size*)
@@ -676,7 +676,7 @@
           ;; Draw dashed line at foldback point
           (when foldback-point
             (iterate (with x = (base->x foldback-point))
-                     (for y :from mpys :to mpye :by 4)
+                     (for y :from mpys :to qpye :by 4)
                      (draw x y      #xBF #xB0 #x86)
                      (draw x (1+ y) #xBF #xB0 #x86)))
 
@@ -807,6 +807,7 @@
         "classification"
         "monotony"
         "foldback-point"
+        "mean-qscore"
         "llqr"
         "llqr-start"
         "llqr-end"
@@ -821,6 +822,7 @@
                             (if (foldback-point result)
                               (princ-to-string (foldback-point result))
                               "")
+                            (princ-to-string (mean-qscore result))
                             (princ-to-string (llqr result))
                             (princ-to-string (or (llqr-start result) ""))
                             (princ-to-string (or (llqr-end result) ""))

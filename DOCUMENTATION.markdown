@@ -23,13 +23,15 @@ The resulting foldbacks.csv file will contain the following columns:
 5. foldback\-point: estimated position of the foldback point for foldbacks, empty
 otherwise
 
-6. llq: length of the longest low\-quality region in the read
+6. mean\-qscore: the mean Q\-score of the read
 
-7. llq\-start: start of the longest low\-quality region, blank if none exists
+7. llqr: length of the longest low\-quality region in the read
 
-8. llq\-end: end of the longest low\-quality region, blank if none exists
+8. llqr\-start: start of the longest low\-quality region, blank if none exists
 
-9. processing\-time\-microsec: how long minimera took to process this read
+9. llqr\-end: end of the longest low\-quality region, blank if none exists
+
+10. processing\-time\-microsec: how long minimera took to process this read
 
 New columns may be added after these in future versions of Minimera, so when
 processing foldbacks.csv make sure to allow extra columns if you want to remain
@@ -73,6 +75,16 @@ generating minimizers.
     Minimum mean Q\-score, reads with a mean Q\-score less than this will be
     classified as failed and not analyzed for foldback finding (default: 9.0).
 
+*   `--dorado-mean-qscore`
+
+    Compute mean Q\-score using the same method as Dorado (i.e. dropping the
+    first 60 bases first).
+
+*   `--simple-mean-qscore`
+
+    Compute mean Q\-score as a simple mean of Q\-score probabilities (the
+    default).
+
 *   `--monotony-threshold=X`
 
     Monotony score above which reads will be classified as failed and not
@@ -84,11 +96,11 @@ generating minimizers.
 For reads that have passed basic quality checks, Minimera will classify them as
 normal or foldback chimeric reads.
 
-*   `-K N`, `--kmer-size=N`
+*   `-k N`, `--kmer-size=N`
 
     Size of kmers (in base pairs) to use for minimizers (default: 8).
 
-*   `-W N`, `--window-size=N`
+*   `-w N`, `--window-size=N`
 
     Total size of windows (in base pairs) to use for minimizer sketches
     (default: 16).
