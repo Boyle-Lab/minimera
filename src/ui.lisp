@@ -49,6 +49,7 @@
 (defparameter *o/help*
   (adopt:make-option 'help
     :help "Display help and exit."
+    :terse "Display help and exit"
     :long "help"
     :short #\h
     :reduce (constantly t)))
@@ -56,6 +57,7 @@
 (defparameter *o/version*
   (adopt:make-option 'version
     :help "Display version and exit."
+    :terse "Display version and exit"
     :long "version"
     :short #\v
     :reduce (constantly t)))
@@ -64,6 +66,7 @@
 (defparameter *o/threads*
   (adopt:make-option 'threads
     :help "Number of worker threads to spawn. Does not include the reader and writer threads (default: 1)."
+    :terse "Number of worker threads"
     :long "threads"
     :short #\j
     :parameter "N"
@@ -74,6 +77,7 @@
 (defparameter *o/output-directory*
   (adopt:make-option 'output-directory
     :help "Output directory (required)."
+    :terse "Output directory"
     :long "output"
     :short #\o
     :parameter "PATH"
@@ -82,6 +86,7 @@
 (defparameter *o/k*
   (adopt:make-option 'k
     :help "Size of kmers (in base pairs) to use for minimizers (default: 8)."
+    :terse "Minimizer kmer size"
     :long "kmer-size"
     :short #\k
     :parameter "N"
@@ -92,6 +97,7 @@
 (defparameter *o/w*
   (adopt:make-option 'w
     :help "Total size of windows (in base pairs) to use for minimizer sketches (default: 16)."
+    :terse "Minimizer window size"
     :long "window-size"
     :short #\w
     :parameter "N"
@@ -102,6 +108,7 @@
 (defparameter *o/foldback-position-epsilon*
   (adopt:make-option 'foldback-position-epsilon
     :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 50)."
+    :terse "Max beginning/end distance for clustering"
     :long "foldback-position-epsilon"
     :parameter "N"
     :reduce #'adopt:last
@@ -111,6 +118,7 @@
 (defparameter *o/intercept-epsilon*
   (adopt:make-option 'intercept-epsilon
     :help "Epsilon (in y-intercept space) used to cluster colinear points during the initial clustering step (default: 30)."
+    :terse "Max y-intercept distance for clustering"
     :long "intercept-epsilon"
     :parameter "N"
     :reduce #'adopt:last
@@ -120,6 +128,7 @@
 (defparameter *o/gap-epsilon*
   (adopt:make-option 'gap-epsilon
     :help "Maximum width (in y-intercept space) of an allowable gap in a cluster.  Gaps wider than this will result in splitting the cluster (default: 300)."
+    :terse "Max gap width for clustering"
     :long "gap-epsilon"
     :parameter "N"
     :reduce #'adopt:last
@@ -129,6 +138,7 @@
 (defparameter *o/minimum-cluster-length*
   (adopt:make-option 'minimum-cluster-length
     :help "Minimum number of allowable points in a cluster.  Clusters with fewer than this many hits will be removed (default: 40)."
+    :terse "Minimum points a cluster must contain"
     :long "minimum-cluster-length"
     :parameter "N"
     :reduce #'adopt:last
@@ -138,6 +148,7 @@
 (defparameter *o/minimum-foldback-length-absolute*
   (adopt:make-option 'minimum-foldback-length-absolute
     :help "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded (default: 50)."
+    :terse "Minimum absolute length of a foldback region"
     :long "minimum-foldback-length-absolute"
     :parameter "N"
     :reduce #'adopt:last
@@ -147,6 +158,7 @@
 (defparameter *o/minimum-foldback-length-relative*
   (adopt:make-option 'minimum-foldback-length-relative
     :help "Minimum length (as a fraction of total read length) of a foldback region.  Regions shorter than this will be excluded (default: 0.05)."
+    :terse "Minimum relative length of a foldback region"
     :long "minimum-foldback-length-relative"
     :parameter "X"
     :reduce #'adopt:last
@@ -156,6 +168,7 @@
 (defparameter *o/monotony-threshold*
   (adopt:make-option 'monotony-threshold
     :help "Monotony score above which reads will be classified as failed and not analyzed for foldback finding (default: 0.50)."
+    :terse "Threshold for monotonous reads"
     :long "monotony-threshold"
     :parameter "X"
     :reduce #'adopt:last
@@ -165,6 +178,7 @@
 (defparameter *o/min-qscore*
   (adopt:make-option 'min-qscore
     :help "Minimum mean Q-score, reads with a mean Q-score less than this will be classified as failed and not analyzed for foldback finding (default: 9.0)."
+    :terse "Skip reads with a low mean Q-score"
     :long "min-qscore"
     :parameter "Q"
     :reduce #'adopt:last
@@ -177,11 +191,14 @@
     :long-no "simple-mean-qscore"
     :help "Compute mean Q-score using the same method as Dorado (i.e. dropping the first 60 bases first)."
     :help-no "Compute mean Q-score as a simple mean of Q-score probabilities (the default)."
+    :terse "Compute mean Q-score like Dorado"
+    :terse-no "Compute simple mean Q-score"
     :initial-value nil))
 
 (defparameter *o/low-quality-threshold*
   (adopt:make-option 'low-quality-threshold
     :help "Threshold (inclusive) for low-quality Q-scores when computing LLQR (default: 3)."
+    :terse "Q-score threshold for LLQR"
     :long "low-quality-threshold"
     :parameter "Q"
     :reduce #'adopt:last
@@ -191,6 +208,7 @@
 (defparameter *o/low-quality-window-size*
   (adopt:make-option 'low-quality-window-size
     :help "Size of moving average window when computing LLQR (default: 10)."
+    :terse "Window size for LLQR"
     :long "low-quality-window-size"
     :parameter "N"
     :reduce #'adopt:last
@@ -201,19 +219,34 @@
   (adopt:make-boolean-options 'plot-foldbacks
     :long "plot-foldbacks"
     :help "Generate plots for all reads classified as foldbacks."
-    :help-no "Do not generate plots for reads classified as foldbacks (the default)."))
+    :terse "Generate plots for foldbacks"
+    :help-no "Do not generate plots for reads classified as foldbacks (the default)."
+    :terse-no "Don't generate plots for foldbacks"))
 
 (adopt:defparameters (*o/plot/normal* *o/plot/no-normal*)
   (adopt:make-boolean-options 'plot-normal
     :long "plot-normal"
     :help "Generate plots for all non-foldback reads."
-    :help-no "Do not generate plots for non-foldback reads (the default)."))
+    :terse "Generate plots for non-foldbacks"
+    :help-no "Do not generate plots for non-foldback reads (the default)."
+    :terse-no "Don't generate plots for non-foldbacks"))
+
+(defparameter *o/plot/annotations*
+  (adopt:make-option 'annotations
+    :help "Path to FASTA file with sequences used for annotations on plots (default none)."
+    :terse "Annotations FASTA path"
+    :long "annotations"
+    :parameter "PATH"
+    :reduce #'adopt:last
+    :initial-value nil))
 
 (adopt:defparameters (*o/progress* *o/no-progress*)
   (adopt:make-boolean-options 'progress
     :long "progress"
     :help "Report progress as reads are classified (the default)."
+    :terse "Report progress"
     :help-no "Do not report progress."
+    :terse-no "Don't report progress"
     :initial-value t))
 
 
@@ -267,7 +300,8 @@
             :options (list *o/plot/foldbacks*
                            *o/plot/no-foldbacks*
                            *o/plot/normal*
-                           *o/plot/no-normal*)))))
+                           *o/plot/no-normal*
+                           *o/plot/annotations*)))))
 
 
 (defun toplevel (&optional argv)
@@ -292,12 +326,14 @@
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
         *monotony-threshold* (gethash 'monotony-threshold options)
         *minimum-qscore* (gethash 'min-qscore options)
-        *dorado-mean-qscore* (gethash 'dorado-mean-qscore options) *low-quality-threshold* (gethash 'low-quality-threshold options)
+        *dorado-mean-qscore* (gethash 'dorado-mean-qscore options)
+        *low-quality-threshold* (gethash 'low-quality-threshold options)
         *low-quality-window-size* (gethash 'low-quality-window-size options)
         *plot-foldbacks* (gethash 'plot-foldbacks options)
         *plot-normal* (gethash 'plot-normal options)
         *output-directory* (gethash 'output-directory options)
-        *report-progress* (gethash 'progress options))
+        *report-progress* (gethash 'progress options)
+        *annotation-path* (gethash 'annotations options))
       (handler-case
           (progn
             (assert *output-directory* () "Output directory must be specified.")

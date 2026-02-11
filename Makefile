@@ -20,13 +20,17 @@ build/minimera.1: $(lisps) Makefile
 	mkdir -p build/
 	sbcl --disable-debugger --load "build-manual.lisp" --quit
 
+build/minimera.fish: $(lisps) Makefile
+	mkdir -p build/
+	sbcl --disable-debugger --load "build-manual.lisp" --quit
+
 build/minimera.sif: build/minimera build/minimera.1 contrib/minimera.def
 	mkdir -p build/
 	singularity build --force --fakeroot build/minimera.sif contrib/minimera.def
 
 
 # Releases --------------------------------------------------------------------
-release: build/minimera build/minimera.1 build/minimera.sif build-release.sh Makefile
+release: build/minimera build/minimera.1 build/minimera.fish build/minimera.sif build-release.sh Makefile
 	mkdir -p build/
 	./build-release.sh
 

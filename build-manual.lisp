@@ -8,3 +8,6 @@
 
 (with-open-file (stream "DOCUMENTATION.markdown" :direction :output :if-exists :supersede)
   (adopt::print-manual/md minimera:*ui* :stream stream))
+
+(with-open-file (stream "build/minimera.fish" :direction :output :if-exists :supersede)
+  (adopt:print-fish-completions minimera:*ui* :stream stream))

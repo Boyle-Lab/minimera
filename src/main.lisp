@@ -25,6 +25,8 @@
 
 (defparameter *worker-threads* 6)
 (defparameter *output-directory* "results")
+(defparameter *annotation-path* nil)
+(defparameter *annotation-tracks* (list))
 (defparameter *report-progress* t)
 (defparameter *interactive* t)
 
@@ -275,10 +277,9 @@
                             index (aref prevs index))))
           result)))))
 
-(defun filter-clusters (clusters)
+(defun filter-clusters (clusters min-length)
   "Return a list of clusters, with gaps broken and small clusters removed."
-  (let* ((min-length *minimum-cluster-length*)
-         (deduped (mapcar (lambda (cluster)
+  (let* ((deduped (mapcar (lambda (cluster)
                             (longest-increasing-subsequence
                               (sort cluster #'< :key #'hit-l1)))
                           clusters))
@@ -288,7 +289,7 @@
                              degapped)))
     results))
 
-(defun cluster (hits)
+(defun cluster (hits &key (min-length *minimum-cluster-length*))
   "Cluster the sorted `hits`, returning a list of vectors of `hit`s."
   (unless (zerop (length hits))
     (iterate
@@ -309,7 +310,7 @@
         (setf start next-i))
       ;; (when stop
       ;;   (finish))
-      (returning (filter-clusters results)))))
+      (returning (filter-clusters results min-length)))))
 
 
 ;;;; Foldback Detection -------------------------------------------------------
@@ -358,6 +359,51 @@
 (defun compute-foldback-position (cluster)
   (multiple-value-bind (start end) (cluster-bounds cluster)
     (truncate (+ start end) 2)))
+
+
+;;;; Annotations --------------------------------------------------------------
+(defclass* (annotation-track :conc-name track-) ()
+  ((name)
+   (sequence)
+   (id-minimizers)
+   (rc-minimizers)))
+
+(defmethod print-object ((o annotation-track) s)
+  (print-unreadable-object (o s :type t)
+    (format s "~A" (track-name o))))
+
+(defun read-fasta-entry (stream &optional (eof-error-p t) eof-value)
+  (with-eof-handled (stream eof-error-p eof-value)
+    (let* ((name (subseq (read-line stream) 1))
+           (chunks (iterate (when (char= #\> (peek-char nil stream nil #\>))
+                              (finish))
+                            (for line :in-stream stream :using #'read-line)
+                            (collect line)))
+           (sequence (map 'a8 #'char-code (apply #'concatenate 'string chunks)))
+           (id-minimizers (minimizers *k* *w* sequence))
+           (rc-minimizers (minimizers *k* *w* (reverse-complement-bytes sequence))))
+      (make-instance 'annotation-track
+        :name name
+        :sequence sequence
+        :id-minimizers id-minimizers
+        :rc-minimizers rc-minimizers))))
+
+(defun parse-annotation-file (path)
+  (with-open-file (stream path)
+    (iterate
+      (for track :in-stream stream :using #'read-fasta-entry)
+      (collect track))))
+
+(defun match-annotation-track (track ms)
+  (flet ((bounds (cluster)
+           (cons (reduce #'min cluster :key #'hit-l1)
+                 (reduce #'max cluster :key #'hit-l1))))
+    (let* ((id-hits (hits ms (track-id-minimizers track)))
+           (rc-hits (hits ms (track-rc-minimizers track)))
+           (id-clusters (cluster id-hits :min-length 15))
+           (rc-clusters (cluster rc-hits :min-length 15)))
+      (list (map 'list #'bounds id-clusters)
+            (map 'list #'bounds rc-clusters)))))
 
 
 ;;;; Hallucination ------------------------------------------------------------
@@ -512,6 +558,10 @@
 ;; |   +----------------------------------------------+   |
 ;; |                         pad                          |
 ;; |   +----------------------------------------------+   |
+;; |   |             Annotation Plots                 |   |
+;; |   +----------------------------------------------+   |
+;; |                         pad                          |
+;; |   +----------------------------------------------+   |
 ;; |   |                 Quality Plot                 |   |
 ;; |   +----------------------------------------------+   |
 ;; |                       1/2 pad                        |
@@ -520,6 +570,7 @@
 ;; +------------------------------------------------------+
 ;;
 ;; mp = minimizer plot
+;; ap = annotation plot
 ;; qp = quality plot
 ;; lg = legend
 ;; ti = title
@@ -530,14 +581,21 @@
 
 (defun render-minimizers (sequence quality-scores result)
   (let* ((has-minimizers (not (slot-boundp result 'skip-reasons)))
+         (has-annotations (not (null *annotation-tracks*)))
          (foldback-point (foldback-point result))
          (id (read-id result))
+         (minimizers (read-minimizers result))
          (llqr (llqr result))
          (llqr-start (llqr-start result))
          (llqr-end (llqr-end result))
+         (annotation-track-height 14)
+         (annotation-colors '#1=(((#x1F #x78 #xB4) (#x33 #xA0 #x2C))
+                                 ((#xE3 #x1A #x1C) (#x6A #x3D #x9A))
+                                 ((#xB1 #x59 #x28) (#xFF #x7F #x00)) . #1#))
          (size 512)
          (pad 26)
          (pad/2 (truncate pad 2))
+         (pad/4 (truncate pad 4))
          ;; Always using the llqma window size results in too many pixels drawn
          ;; for larger reads.  todo fix this by being smarter about drawing?
          (avg-window (max *low-quality-window-size*
@@ -555,16 +613,26 @@
          (mpye (+ mpy mph))
          (msx (truncate w 2)) ; minimizers skipped message
          (msy (+ mpys (truncate (- mpye mpys) 2)))
+         (apw (- size (* 2 pad))) ; annotation plots
+         (aph (* annotation-track-height (length *annotation-tracks*)))
+         (apx pad)
+         (apxs (+ apx 0))
+         (apxe (+ apx apw))
+         (apy (+ mph (* 2 pad) -6))
+         (apys (+ apy 0))
+         (apye (+ apy aph))
          (qpw (- size (* 2 pad))) ; quality plot
          (qph (truncate size 10))
          (qpx pad)
          (qpxs (+ qpx 0))
          (qpxe (+ qpx qpw))
-         (qpy (+ mph (* 2 pad)))
+         (qpy (if has-annotations
+                (+ apy aph pad/4)
+                (+ mpye pad/2)))
          (qpys (+ qpy 0))
          (qpye (+ qpy qph))
          (lgh pad) ; legend
-         (h (+ pad mph pad qph pad/2 lgh))
+         (h (+ pad mph pad (if has-annotations (+ aph pad/2) 0) qph lgh))
          (lg1x 5)
          (lg1y (- h pad))
          (lg2x 5)
@@ -691,6 +759,33 @@
               (when cluster
                 (multiple-value-call #'draw-point
                   (hit-y hit) (hit-x hit) (cluster-color cluster)))))))
+      ;; Annotation tracks
+      (loop :for track in *annotation-tracks*
+            :for y :from apys :by annotation-track-height
+            :for (id-clusters rc-clusters) = (match-annotation-track track minimizers)
+            :for name = (track-name track)
+            :for ((idR idG idB) (rcR rcG rcB)) :in annotation-colors
+            :do (progn
+                  (draw-string 2 (- y 4)
+                               (subseq name 0 (min 4 (length name))))
+                  (do-range ((x apxs apxe))
+                    (draw x y #xCC))
+                  (do-range ((x (base->x 0)
+                                (min (base->x (length (track-sequence track)))
+                                     (1- size))))
+                    (draw x y #x00))
+                  (loop :for (pos1 . pos2) :in id-clusters
+                        :for x1 = (base->x pos1)
+                        :for x2 = (base->x pos2)
+                        :do (do-irange ((x x1 x2)
+                                        (dy -3 -1))
+                              (draw x (+ y dy) idR idG idB)))
+                  (loop :for (pos1 . pos2) :in rc-clusters
+                        :for x1 = (base->x pos1)
+                        :for x2 = (base->x pos2)
+                        :do (do-irange ((x x1 x2)
+                                        (dy 1 3))
+                              (draw x (+ y dy) rcR rcG rcB)))))
       ;; Quality scores labels
       (let ((q20y (quality->y 20))
             (lqy (quality->y *low-quality-threshold*)))
@@ -729,6 +824,7 @@
 (defclass* minimera-result ()
   (read-id
    read-length
+   read-minimizers
    classification
    monotony
    mean-qscore
@@ -762,6 +858,7 @@
         (make-instance 'minimera-result
           :read-id id
           :read-length read-length
+          :read-minimizers m1
           :classification :failed
           :monotony monotony
           :mean-qscore mean-qscore
@@ -781,6 +878,7 @@
           (make-instance 'minimera-result
             :read-id id
             :read-length read-length
+            :read-minimizers m1
             :classification classification
             :monotony monotony
             :mean-qscore mean-qscore
@@ -848,6 +946,8 @@
 
 
 (defun run (filename)
+  (when *annotation-path*
+    (setf *annotation-tracks* (parse-annotation-file *annotation-path*)))
   (ensure-directories-exist (uiop:ensure-directory-pathname *output-directory*))
   (with-open-file (csv-stream (format nil "~A/foldbacks.csv" *output-directory*)
                               :direction :output

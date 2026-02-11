@@ -41,6 +41,7 @@ minimera <(clean_fastq) \
     --output "$scratch" \
     --plot-foldbacks \
     --plot-normal \
+    --annotations "$HOME/src/minimera/contrib/annotations.fasta" \
     "$@"
 
 cp  "$scratch"/plots/"$id".png \

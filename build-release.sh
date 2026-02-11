@@ -22,7 +22,8 @@ mkdir -p ./"${binary_dir}"
 cp -t ./"${binary_dir}" \
     ../../LICENSE \
     ../minimera \
-    ../minimera.1
+    ../minimera.1 \
+    ../minimera.fish
 
 tar -czf "${binary_tar}" ./"${binary_dir}"
 
