@@ -362,6 +362,9 @@
 
 
 ;;;; Annotations --------------------------------------------------------------
+(defun nucleotide-char-p (char)
+  (member char '(#\A #\C #\T #\G)))
+
 (defclass* (annotation-track :conc-name track-) ()
   ((name)
    (sequence)
@@ -374,14 +377,21 @@
 
 (defun read-fasta-entry (stream &optional (eof-error-p t) eof-value)
   (with-eof-handled (stream eof-error-p eof-value)
-    (let* ((name (subseq (read-line stream) 1))
+    (let* ((header-line (read-line stream))
+           (name (progn (assert (char= #\> (char header-line 0)) ()
+                          "Bad annotation header line ~S, must start with >." header-line)
+                        (subseq header-line 1)))
            (chunks (iterate (when (char= #\> (peek-char nil stream nil #\>))
                               (finish))
                             (for line :in-stream stream :using #'read-line)
                             (collect line)))
-           (sequence (map 'a8 #'char-code (apply #'concatenate 'string chunks)))
-           (id-minimizers (minimizers *k* *w* sequence))
-           (rc-minimizers (minimizers *k* *w* (reverse-complement-bytes sequence))))
+           (sequence (apply #'concatenate 'string chunks))
+           (sequence-bytes (progn
+                             (assert (every #'nucleotide-char-p sequence) ()
+                               "Bad annotation sequence ~A, invalid sequence content (must be ACTG only)." name)
+                             (map 'a8 #'char-code sequence)))
+           (id-minimizers (minimizers *k* *w* sequence-bytes))
+           (rc-minimizers (minimizers *k* *w* (reverse-complement-bytes sequence-bytes))))
       (make-instance 'annotation-track
         :name name
         :sequence sequence
@@ -400,8 +410,8 @@
                  (reduce #'max cluster :key #'hit-l1))))
     (let* ((id-hits (hits ms (track-id-minimizers track)))
            (rc-hits (hits ms (track-rc-minimizers track)))
-           (id-clusters (cluster id-hits :min-length 15))
-           (rc-clusters (cluster rc-hits :min-length 15)))
+           (id-clusters (cluster id-hits :min-length 12))
+           (rc-clusters (cluster rc-hits :min-length 12)))
       (list (map 'list #'bounds id-clusters)
             (map 'list #'bounds rc-clusters)))))
 
