@@ -29,6 +29,7 @@
 (defparameter *annotation-tracks* (list))
 (defparameter *report-progress* t)
 (defparameter *interactive* t)
+(defparameter *input-format* :fastq)
 
 
 ;;;; Types --------------------------------------------------------------------
@@ -37,6 +38,9 @@
 
 (deftype a8 ()
   '(simple-array u8 (*)))
+
+(defun str->a8 (str)
+  (map 'a8 #'char-code str))
 
 
 ;;;; Minimizers ---------------------------------------------------------------
@@ -362,12 +366,61 @@
 
 
 ;;;; Annotations --------------------------------------------------------------
+(defun make-smith-waterman-grid (rows cols)
+  (make-array (list rows cols)
+    :element-type 'fixnum
+    :initial-element 0))
+
+(defun find-best-score (grid)
+  (iterate outer
+    (with (rows cols) = (array-dimensions grid))
+    (for r :from 0 :below rows)
+    (iterate (for c :from 0 :below cols)
+             (in outer (finding (cons r c) :maximizing (aref grid r c))))))
+
+(defun extract-smith-waterman-path (grid prev)
+  (iterate
+    (for coord
+         :first (find-best-score grid)
+         :then (aref prev (car coord) (cdr coord)))
+    (until (zerop (aref grid (car coord) (cdr coord))))
+    (collect (cons (1- (car coord))
+                   (1- (cdr coord)))
+             :at start)))
+
+(defun smith-waterman (seq1 seq2)
+  (check-type seq1 a8)
+  (check-type seq2 a8)
+  (iterate
+    (with rows = (1+ (length seq1)))
+    (with cols = (1+ (length seq2)))
+    (with grid = (make-smith-waterman-grid rows cols))
+    (with prev = (make-array (list rows cols) :initial-element nil))
+    (for row :from 1 :below rows)
+    (for ch1 :in-array seq1)
+    (iterate
+      (for col :from 1 :below cols)
+      (for ch2 :in-array seq2)
+      (for row-1 = (1- row))
+      (for col-1 = (1- col))
+      (for match = (+ (aref grid row-1 col-1) (if (= ch1 ch2) 1 -1)))
+      (for gap-1 = (+ (aref grid row col-1) -2))
+      (for gap-2 = (+ (aref grid row-1 col) -2))
+      (for best = (max match gap-1 gap-2))
+      (setf (aref grid row col) best
+            (aref prev row col) (cond ((= best match) (cons row-1 col-1))
+                                      ((= best gap-1) (cons row col-1))
+                                      ((= best gap-2) (cons row-1 col)))))
+    (returning (extract-smith-waterman-path grid prev))))
+
 (defun nucleotide-char-p (char)
   (member char '(#\A #\C #\T #\G)))
 
 (defclass* (annotation-track :conc-name track-) ()
   ((name)
    (sequence)
+   (id-sequence-bytes)
+   (rc-sequence-bytes)
    (id-minimizers)
    (rc-minimizers)))
 
@@ -386,15 +439,18 @@
                             (for line :in-stream stream :using #'read-line)
                             (collect line)))
            (sequence (apply #'concatenate 'string chunks))
-           (sequence-bytes (progn
-                             (assert (every #'nucleotide-char-p sequence) ()
-                               "Bad annotation sequence ~A, invalid sequence content (must be ACTG only)." name)
-                             (map 'a8 #'char-code sequence)))
-           (id-minimizers (minimizers *k* *w* sequence-bytes))
-           (rc-minimizers (minimizers *k* *w* (reverse-complement-bytes sequence-bytes))))
+           (id-sequence-bytes (progn
+                                (assert (every #'nucleotide-char-p sequence) ()
+                                  "Bad annotation sequence ~A, invalid sequence content (must be ACTG only)." name)
+                                (str->a8 sequence)))
+           (rc-sequence-bytes (reverse-complement-bytes id-sequence-bytes))
+           (id-minimizers (minimizers *k* *w* id-sequence-bytes))
+           (rc-minimizers (minimizers *k* *w* rc-sequence-bytes)))
       (make-instance 'annotation-track
         :name name
         :sequence sequence
+        :id-sequence-bytes id-sequence-bytes
+        :rc-sequence-bytes rc-sequence-bytes
         :id-minimizers id-minimizers
         :rc-minimizers rc-minimizers))))
 
@@ -404,7 +460,18 @@
       (for track :in-stream stream :using #'read-fasta-entry)
       (collect track))))
 
-(defun match-annotation-track (track ms)
+(defun match-short-annotation-track (track seq)
+  (flet ((bounds (alignment)
+           (cons (reduce #'min alignment :key #'car)
+                 (reduce #'max alignment :key #'car))))
+    (let* ((id-align (smith-waterman seq (track-id-sequence-bytes track)))
+           (rc-align (smith-waterman seq (track-rc-sequence-bytes track))))
+      (list (when (> (length id-align) 10)
+              (list (bounds id-align)))
+            (when (> (length rc-align) 10)
+              (list (bounds rc-align)))))))
+
+(defun match-long-annotation-track (track ms)
   (flet ((bounds (cluster)
            (cons (reduce #'min cluster :key #'hit-l1)
                  (reduce #'max cluster :key #'hit-l1))))
@@ -414,6 +481,12 @@
            (rc-clusters (cluster rc-hits :min-length 12)))
       (list (map 'list #'bounds id-clusters)
             (map 'list #'bounds rc-clusters)))))
+
+
+(defun match-annotation-track (track ms seq)
+  (if (> (length (track-sequence track)) 50)
+    (match-long-annotation-track track ms)
+    (match-short-annotation-track track seq)))
 
 
 ;;;; Hallucination ------------------------------------------------------------
@@ -443,15 +516,28 @@
   ;; Q = -10 * log10(P)
   (* -10.0d0 (log p 10.0d0)))
 
-(defun compute-mean-qscore (qs &aux (len (length qs)))
-  ;; Compute this in probability space.  Q scores are logarithmic so averaging
-  ;; them doesn't make much sense.
-  (if (zerop len)
-    0.0d0
-      (let ((truncate-read (and *dorado-mean-qscore* (> len 60))))
-        (float (p->q (/ (reduce #'+ qs :start (if truncate-read 60 0) :key #'q->p)
-                        (if truncate-read (- len 60) len)))
-               0.0d0))))
+(defun compute-mean-qscore (qs &key start end)
+  (if (and (null start) (null end))
+    (let ((truncate-read (and *dorado-mean-qscore* (> (length qs) 60))))
+      (compute-mean-qscore qs :start (if truncate-read 60 0)))
+    (let* ((start (or start 0))
+           (end (or end (length qs)))
+           (length (- end start)))
+      (if (zerop length)
+        0.0d0
+        ;; Compute this in probability space.  Q scores are logarithmic so averaging
+        ;; them doesn't make much sense.
+        (coerce (p->q (/ (reduce #'+ qs :start start :end end :key #'q->p) length))
+                'double-float)))))
+
+(defun compute-foldback-qscores (qs cluster)
+  (multiple-value-bind (foldback-start foldback-end) (cluster-bounds cluster)
+    (let* ((foldback-mid (compute-foldback-position cluster))
+           (prefix-qscore (unless (zerop foldback-start)
+                            (compute-mean-qscore qs :start 0 :end foldback-start)))
+           (foldback-prefix-qscore (compute-mean-qscore qs :start foldback-start :end foldback-mid))
+           (foldback-suffix-qscore (compute-mean-qscore qs :start foldback-mid   :end foldback-end)))
+      (list prefix-qscore foldback-prefix-qscore foldback-suffix-qscore))))
 
 (defun compute-llqr (quality-scores &key
                      (window-size *low-quality-window-size*)
@@ -529,6 +615,37 @@
     (t 10000)))
 
 
+(defun parse-move-table (move-table)
+  (nreverse
+    (loop
+      :with stride = (aref move-table 0)
+      :with result = (make-array (reduce #'+ move-table :start 1)
+                                 :element-type 'fixnum
+                                 :initial-element 0)
+      :with ri = (1- (length result))
+      :for mi :from (1- (length move-table)) :downto 1
+      :do (progn
+            (when (minusp ri)
+              (assert (null (find-if-not #'zerop move-table :start 1 :end (1+ mi))))
+              (loop-finish))
+            (incf (aref result ri) stride)
+            (ecase (aref move-table mi)
+              (0 (progn))
+              (1 (decf ri))))
+      :finally (return result))))
+
+(defun bin-move-table-signal (move-table sequence-length bins)
+  (check-type move-table (simple-array fixnum (*)))
+  (iterate
+    (with signal = (parse-move-table move-table))
+    (with bin-width = (truncate sequence-length bins))
+    (with d = (coerce bin-width 'double-float))
+    (repeat bins)
+    (for bin-start :from 0 :by bin-width)
+    (for bin-end = (+ bin-start bin-width))
+    (for bin-sum = (reduce #'+ signal :start bin-start :end bin-end))
+    (collect (/ bin-sum d) :result-type 'vector)))
+
 (defun-inline cluster-color (cluster)
   (case cluster
     ((nil) (values #x00 #x00 #x00))
@@ -574,6 +691,10 @@
 ;; |   +----------------------------------------------+   |
 ;; |   |                 Quality Plot                 |   |
 ;; |   +----------------------------------------------+   |
+;; |                         pad                          |
+;; |   +----------------------------------------------+   |
+;; |   |                 Signal Speed                 |   |
+;; |   +----------------------------------------------+   |
 ;; |                       1/2 pad                        |
 ;; | Legend1               1/2 pad                        |
 ;; | Legend2               1/2 pad                        |
@@ -582,6 +703,7 @@
 ;; mp = minimizer plot
 ;; ap = annotation plot
 ;; qp = quality plot
+;; sp = signal plot
 ;; lg = legend
 ;; ti = title
 ;; s = start
@@ -589,7 +711,7 @@
 ;; w = width
 ;; h = height
 
-(defun render-minimizers (sequence quality-scores result)
+(defun render-minimizers (sequence quality-scores move-table result)
   (let* ((has-minimizers (not (slot-boundp result 'skip-reasons)))
          (has-annotations (not (null *annotation-tracks*)))
          (foldback-point (foldback-point result))
@@ -630,7 +752,7 @@
          (apxe (+ apx apw))
          (apy (+ mph (* 2 pad) -6))
          (apys (+ apy 0))
-         (apye (+ apy aph))
+         ;; (apye (+ apy aph))
          (qpw (- size (* 2 pad))) ; quality plot
          (qph (truncate size 10))
          (qpx pad)
@@ -641,8 +763,24 @@
                 (+ mpye pad/2)))
          (qpys (+ qpy 0))
          (qpye (+ qpy qph))
+         (spw (- size (* 2 pad))) ; signal plot
+         (sph (if move-table (truncate size 10) 0))
+         (spx pad)
+         (spxs (+ spx 0))
+         (spxe (+ spx spw))
+         (spy (+ qpye pad))
+         ;; (spys (+ spy 0))
+         (spye (+ spy sph))
+         (signal (when move-table
+                   (bin-move-table-signal move-table
+                                          (length sequence)
+                                          (min (length sequence) spw))))
          (lgh pad) ; legend
-         (h (+ pad mph pad (if has-annotations (+ aph pad/2) 0) qph lgh))
+         (h (+ pad mph pad
+               (if has-annotations (+ aph pad/2) 0)
+               qph
+               (if move-table (+ sph pad) 0)
+               lgh))
          (lg1x 5)
          (lg1y (- h pad))
          (lg2x 5)
@@ -772,7 +910,7 @@
       ;; Annotation tracks
       (loop :for track in *annotation-tracks*
             :for y :from apys :by annotation-track-height
-            :for (id-clusters rc-clusters) = (match-annotation-track track minimizers)
+            :for (id-clusters rc-clusters) = (match-annotation-track track minimizers sequence)
             :for name = (track-name track)
             :for ((idR idG idB) (rcR rcG rcB)) :in annotation-colors
             :do (progn
@@ -824,7 +962,22 @@
                (when (> b avg-window)
                  (for xa = (base->x b))
                  (for ya = (quality->y (/ (summation qs) avg-window)))
-                 (draw xa ya #xFF 0 0))))
+                 (draw xa ya #xFF 0 0)))
+      ;; Signal speed
+      (flet ((signal->dy (s)
+               (min (truncate s) 200)))
+        (when move-table
+          (do-range ((x spxs spxe)
+                     (s 0 50 5))
+            (draw x (- spye (signal->dy s)) #xCC))
+          (if (>= (length sequence) spw)
+            (loop :for x :from spxs :below spxe
+                  :for i :from 0
+                  :for s = (aref signal i)
+                  :do (loop
+                        :for dy :from (signal->dy s) :downto 0
+                        :do (draw x (- spye dy) #x00 #x00 #XFF)))
+            nil))))
     (ensure-directories-exist (format nil "~A/plots/" *output-directory*))
     (zpng:write-png png (format nil "~A/plots/~A.png" *output-directory* id)
                     :if-exists :supersede)))
@@ -838,6 +991,9 @@
    classification
    monotony
    mean-qscore
+   (prefix-mean-qscore :initform nil)
+   (foldback-prefix-mean-qscore :initform nil)
+   (foldback-suffix-mean-qscore :initform nil)
    skip-reasons
    (foldback-point :initform nil)
    foldback-hits
@@ -884,7 +1040,9 @@
                (result (alexandria:extremum results #'> :key #'cluster-lengths))
                (classification (if result :foldback :normal))
                (foldback-position (when result
-                                    (compute-foldback-position result))))
+                                    (compute-foldback-position result)))
+               (foldback-qscores (when result
+                                   (compute-foldback-qscores quality-scores result))))
           (make-instance 'minimera-result
             :read-id id
             :read-length read-length
@@ -892,6 +1050,9 @@
             :classification classification
             :monotony monotony
             :mean-qscore mean-qscore
+            :prefix-mean-qscore (when foldback-qscores (first foldback-qscores))
+            :foldback-prefix-mean-qscore (when foldback-qscores (second foldback-qscores))
+            :foldback-suffix-mean-qscore (when foldback-qscores (third foldback-qscores))
             :llqr llqr
             :llqr-start llqr-start
             :llqr-end llqr-end
@@ -899,12 +1060,12 @@
             :foldback-hits hits
             :foldback-clusters clusters))))))
 
-(defun process-read (id sequence quality-scores)
+(defun process-read (id sequence quality-scores move-table)
   (let ((result (process-read% id sequence quality-scores)))
     (when (if (foldbackp result)
             *plot-foldbacks*
             *plot-normal*)
-      (render-minimizers sequence quality-scores result))
+      (render-minimizers sequence quality-scores move-table result))
     result))
 
 
@@ -916,6 +1077,9 @@
         "monotony"
         "foldback-point"
         "mean-qscore"
+        "prefix-mean-qscore"
+        "foldback-prefix-mean-qscore"
+        "foldback-suffix-mean-qscore"
         "llqr"
         "llqr-start"
         "llqr-end"
@@ -931,6 +1095,9 @@
                               (princ-to-string (foldback-point result))
                               "")
                             (princ-to-string (mean-qscore result))
+                            (princ-to-string (or (prefix-mean-qscore result) ""))
+                            (princ-to-string (or (foldback-prefix-mean-qscore result) ""))
+                            (princ-to-string (or (foldback-suffix-mean-qscore result) ""))
                             (princ-to-string (llqr result))
                             (princ-to-string (or (llqr-start result) ""))
                             (princ-to-string (or (llqr-end result) ""))
@@ -943,12 +1110,29 @@
       (sb-ext:get-time-of-day)
     (+ (* 1000000 sec) microsec)))
 
-(defun work% (fastq-read)
+(defun work-fastq% (fastq-read)
   (let* ((start (gettime))
          (id (faster:parse-sequence-id (faster:id fastq-read)))
          (seq (faster:seq fastq-read))
          (qs (faster:n-bytes-to-quality-scores (faster:qs fastq-read)))
-         (result (process-read id seq qs))
+         (result (process-read id seq qs nil))
+         (end (gettime))
+         (processing-time (- end start)))
+    (setf (processing-time result) processing-time)
+    result))
+
+(defun work-bam% (alignment)
+  (let* ((start (gettime))
+         (id (faster/bam::alignment-read-name alignment))
+         (seq (let ((seq (faster/bam::alignment-sequence/fastq alignment)))
+                (when (faster/bam::revcompp alignment)
+                  (nreverse-complement-bytes seq))
+                seq))
+         (qs (faster/bam::alignment-phred alignment))
+         (move-table (let ((mv (faster/bam::alignment-tag alignment "mv")))
+                       (when mv
+                         (cdr (faster/bam::tag-value mv)))))
+         (result (process-read id seq qs move-table))
          (end (gettime))
          (processing-time (- end start)))
     (setf (processing-time result) processing-time)
@@ -964,9 +1148,17 @@
                               :if-exists :supersede)
     (conserve:write-row *csv-headers* csv-stream)
     (faster:run filename
-                :work-function #'work%
+                :work-function (ecase *input-format*
+                                 (:fastq #'work-fastq%)
+                                 (:bam #'work-bam%))
+                :format *input-format*
                 :output-function (curry #'output% csv-stream)
                 :interactive *interactive*
                 :report-progress *report-progress*
                 :worker-threads *worker-threads*
                 :queue-size (* 10 *worker-threads*))))
+
+;; (setf *output-directory* "results/multiqs")
+;; (setf *input-format* :bam)
+
+;; (run "data/bams/20251216_1450_P2S-01935-A_PBE89432_059690b8.sup.unmapped.bam")

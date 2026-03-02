@@ -250,6 +250,23 @@
     :initial-value t))
 
 
+(defparameter *o/fastq*
+  (adopt:make-option 'fastq
+    :result-key 'format
+    :help "Inputs are FASTQ files (the default)."
+    :terse "FASTQ input"
+    :long "fastq"
+    :reduce (constantly :fastq)
+    :initial-value :fastq))
+
+(defparameter *o/bam*
+  (adopt:make-option 'bam
+    :result-key 'format
+    :help "Inputs are BAM files."
+    :terse "BAM input"
+    :long "bam"
+    :reduce (constantly :bam)))
+
 (defparameter *examples*
   '(("Run minimera on a FASTQ:"
      . "minimera path/to/data.fastq --output ./results/")
@@ -271,6 +288,11 @@
           *o/threads*
           *o/progress*
           *o/no-progress*
+          (adopt:make-group 'input
+            :title "Input Options"
+            :help "Minimera supports either FASTQ and BAM files as input."
+            :options (list *o/fastq*
+                           *o/bam*))
           (adopt:make-group 'filtering
             :title "Filtering Options"
             :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers."
@@ -333,7 +355,8 @@
         *plot-normal* (gethash 'plot-normal options)
         *output-directory* (gethash 'output-directory options)
         *report-progress* (gethash 'progress options)
-        *annotation-path* (gethash 'annotations options))
+        *annotation-path* (gethash 'annotations options)
+        *input-format* (gethash 'format options))
       (handler-case
           (progn
             (assert *output-directory* () "Output directory must be specified.")
