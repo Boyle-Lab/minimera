@@ -417,14 +417,17 @@
 
 
 ;;;; Hallucination ------------------------------------------------------------
+;; https://nanoporetech.com/support/software/data-analysis/where-can-i-find-out-more-about-quality-scores
+(defconstant +max-qscore+ 93)
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun q->p% (q)
     ;; P = 10 ^ (-Q/10)
     (expt 10.0d0 (/ (- q) 10.0d0)))
 
   (defun make-q-table% ()
-    (let ((result (make-array (list 61) :element-type 'double-float)))
-      (loop :for q :from 0 :to 60
+    (let ((result (make-array (list (1+ +max-qscore+)) :element-type 'double-float)))
+      (loop :for q :from 0 :to +max-qscore+
             :do (setf (aref result q) (q->p% q)))
       result)))
 
