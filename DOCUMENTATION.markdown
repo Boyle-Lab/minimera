@@ -171,6 +171,11 @@ these plots is slow, but they can be useful to debug edge cases.
 
     Do not generate plots for non\-foldback reads (the default).
 
+*   `--annotations=PATH`
+
+    Path to FASTA file with sequences used for annotations on plots (default
+    none).
+
 
 ## Examples
 
