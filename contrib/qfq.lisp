@@ -102,7 +102,8 @@
   (reduce #'concat (gimme n seq)))
 
 (defun run (binding-forms fastq-form)
-  (let ((bindings (make-hash-table)))
+  (let ((bindings (make-hash-table))
+        (entries 1))
     (labels ((r (form) (rev (eval-form form)))
              (c (form) (comp (eval-form form)))
              (rc (form) (revcomp (eval-form form)))
@@ -144,12 +145,13 @@
         (destructuring-bind (symbol form) binding-form
           (case symbol
             (:seed (setf *random-state* (sb-ext:seed-random-state form)))
+            (:entries (setf entries form))
             (t (setf (gethash symbol bindings) (eval-form form))))))
 
       ;; Process the FASTQ form using the bindings and print it
-      (destructuring-bind (seq . qs)
-          (eval-form fastq-form)
-        (format nil "@quickfastq~%~A~%+~%~A" seq qs)))))
+      (loop :repeat entries
+            :for (seq . qs) = (eval-form fastq-form)
+            :collect (format nil "@quickfastq~%~A~%+~%~A~%" seq qs)))))
 
 (defun read-form ()
   (let ((*package* (find-package :quick-fastq)))
@@ -160,7 +162,7 @@
   ; todo safe-read this
   (let ((binding-forms (read-form))
         (fastq-form (read-form)))
-    (write-string (run binding-forms fastq-form))))
+    (map nil #'write-string (run binding-forms fastq-form))))
 
 (defun build ()
   (sb-ext:save-lisp-and-die "build/qfq"

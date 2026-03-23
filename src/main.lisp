@@ -580,7 +580,7 @@
 
 
 (defun find-llqr (lqrs)
-  (alexandria:extremum lqrs #'> :key :lqr-len))
+  (alexandria:extremum lqrs #'> :key #'lqr-length))
 
 
 ;;;; Plotting -----------------------------------------------------------------
@@ -955,7 +955,7 @@
   (check-type sequence a8)
   (let* ((lqrs (compute-lqrs quality-scores))
          (llqr (find-llqr lqrs))
-         (llqr-len (when llqr (lqr-length llqr)))
+         (llqr-len (if llqr (lqr-length llqr) 0))
          (llqr-start (when llqr (car llqr)))
          (llqr-end (when llqr (cdr llqr)))
          (lq-total (reduce #'+ lqrs :key #'lqr-length))

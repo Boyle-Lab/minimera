@@ -1,4 +1,4 @@
-.PHONY: all release binary clean contrib
+.PHONY: all release binary clean contrib test
 
 binary: build/minimera
 
@@ -44,6 +44,10 @@ build/qfq: contrib/qfq.lisp Makefile
 build/fastq-stats: contrib/fastq-stats.lisp Makefile
 	mkdir -p build/
 	sbcl --disable-debugger --load "contrib/fastq-stats.lisp" --eval "(fastq-stats:build)" --quit
+
+# Test ------------------------------------------------------------------------
+test:
+	cd tests && cram minimera.t
 
 # Clean -----------------------------------------------------------------------
 clean:

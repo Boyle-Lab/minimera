@@ -53,4 +53,8 @@ able to run `make` to:
 2. Build a `minimera` binary without Quicklisp by using `buildapp` with that manifest.
 3. Build a `minimera.1` man page.
 
+## Tests
 
+There's a (very small) [Cram](https://bitheap.org/cram/) test suite, mostly so
+I can to avoid breaking things inadvertently before a release.  Once you've got
+cram installed `make test` to run it.
