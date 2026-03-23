@@ -31,7 +31,9 @@ otherwise
 
 9. llqr\-end: end of the longest low\-quality region, blank if none exists
 
-10. processing\-time\-microsec: how long minimera took to process this read
+10. lq\-total: number of bases in all low\-quality regions in the read
+
+11. processing\-time\-microsec: how long minimera took to process this read
 
 New columns may be added after these in future versions of Minimera, so when
 processing foldbacks.csv make sure to allow extra columns if you want to remain
