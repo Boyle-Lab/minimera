@@ -94,6 +94,12 @@
 (defun add-err (freq dna)
   (add-ins freq (add-del freq (add-snp freq dna))))
 
+(defun literal (seq)
+  (cons (copy-seq seq)
+        (coerce (gimme (length seq) (random-qscore)) 'string)))
+
+(defun repeat (n seq)
+  (reduce #'concat (gimme n seq)))
 
 (defun run (binding-forms fastq-form)
   (let ((bindings (make-hash-table)))
@@ -107,9 +113,11 @@
              (ins (freq form) (add-ins freq (eval-form form)))
              (del (freq form) (add-del freq (eval-form form)))
              (err (freq form) (add-err freq (eval-form form)))
+             (rep (n form) (repeat n (eval-form form)))
              (eval-form (form)
                (typecase form
                  (integer (random-dna form))
+                 (string (literal form))
                  (vector (reduce #'concat form :key #'eval-form))
                  (symbol (gethash form bindings))
                  (list (destructuring-bind (op . args) form
@@ -118,6 +126,7 @@
                                   (parse-integer (subseq (symbol-name op) 1))
                                   args)
                            (apply (ecase op
+                                    ((rep tr) #'rep)
                                     ((rev r) #'r)
                                     ((comp c) #'c)
                                     ((revcomp rc) #'rc)
@@ -133,7 +142,9 @@
       ;; Process the bindings
       (dolist (binding-form binding-forms)
         (destructuring-bind (symbol form) binding-form
-          (setf (gethash symbol bindings) (eval-form form))))
+          (case symbol
+            (:seed (setf *random-state* (sb-ext:seed-random-state form)))
+            (t (setf (gethash symbol bindings) (eval-form form))))))
 
       ;; Process the FASTQ form using the bindings and print it
       (destructuring-bind (seq . qs)
