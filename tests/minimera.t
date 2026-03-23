@@ -1,4 +1,4 @@
-  $ minimera() { "$TESTDIR/../build/minimera" "$TESTDIR/data/example.fastq" --output ./out --no-progress "$@"; }
+  $ minimera() { "$TESTDIR/../build/minimera" "$TESTDIR/data/example.fastq" --output ./out --no-progress --threads 4 "$@"; }
   $ results() { (head -n1 ./out/foldbacks.csv | cut -d, --complement -f11 && tail -n+2 ./out/foldbacks.csv | cut -d, --complement -f 11 | sort) | column -s, -t ; }
 
 Usage:
@@ -116,6 +116,7 @@ Run on a FASTQ with some examples:
   6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
   7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
   8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
   cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
   cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
   foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
@@ -129,12 +130,15 @@ Run on a FASTQ with some examples:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
   monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
   non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
   non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
   partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
 
 Disable LQR computation and splicing by making the threshold 0:
 
@@ -145,6 +149,7 @@ Disable LQR computation and splicing by making the threshold 0:
   6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
   7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
   8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
   cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
   cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
   foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
@@ -158,9 +163,256 @@ Disable LQR computation and splicing by making the threshold 0:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0208                    9.501463163531792   0                           0
   monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
   non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
   non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
   partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
+
+Mean qscore filtering:
+
+  $ minimera --min-qscore 10
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.324421040730403  0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
+  foldback-lqr-end                      4320         foldback        0.0051    1996            11.580066231058375  323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         failed          0.0051                    9.33420463893992    626   1997        2623      626
+  foldback-lqr-post-gap                 4229         foldback        0.0051    1993            12.683751180511019  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         foldback        0.0051    2228            12.683751180510981  235   497         732       235
+  foldback-lqr-start                    4320         foldback        0.0051    2316            11.580066231058726  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.387276545523914  0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.31231293285616   0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
+  low-quality-regions                   712          failed          0.0168                    9.501463163531792   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
+  non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
+
+  $ minimera --min-qscore 15
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.324421040730403  0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
+  foldback-lqr-end                      4320         failed          0.0051                    11.580066231058375  323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         failed          0.0051                    9.33420463893992    626   1997        2623      626
+  foldback-lqr-post-gap                 4229         failed          0.0051                    12.683751180511019  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         failed          0.0051                    12.683751180510981  235   497         732       235
+  foldback-lqr-start                    4320         failed          0.0051                    11.580066231058726  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.387276545523914  0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.31231293285616   0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
+  low-quality-regions                   712          failed          0.0168                    9.501463163531792   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
+  non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
+
+Simple vs Dorado qscore computation:
+
+  $ minimera --dorado-mean-qscore
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.31972304129274   0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.342972559152695  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.361650668014207  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.349628398048328  0                           0
+  big-deletion                          3900         normal          0.0052                    19.388822102676645  0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.362735937392827  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.413623289304546  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.35464206375981   0                           0
+  foldback-lqr-end                      4320         foldback        0.0051    1996            11.52938169002585   323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         foldback        0.0051    1993            9.283037317715799   626   1997        2623      626
+  foldback-lqr-post-gap                 4229         foldback        0.0051    1993            12.634944012149383  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         foldback        0.0051    2228            12.634944012149347  235   497         732       235
+  foldback-lqr-start                    4320         foldback        0.0051    2316            12.269999243828316  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.38761735634424   0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.313171278538324  0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.325967721237447  0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.366952124571707  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.3858496016426    0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.378776148021696  0                           0
+  longboi                               120000       normal          0.0067                    19.35717157042798   0                           0
+  low-quality-first-bases               860          normal          0.0242                    39.99999999999993   0                           0
+  low-quality-regions                   712          normal          0.0168                    9.155980411022364   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.52419684251569   0                           0
+  non-foldback                          2800         normal          0.0073                    19.354881909333656  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.35520679939805   0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.35917461781869   0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.35021167688925   0                           0
+
+Foldback position epsilon, for end gaps:
+
+  $ minimera --foldback-position-epsilon 140
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.324421040730403  0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
+  foldback-lqr-end                      4320         foldback        0.0051    1996            11.580066231058375  323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         foldback        0.0051    1993            9.33420463893992    626   1997        2623      626
+  foldback-lqr-post-gap                 4229         foldback        0.0051    1993            12.683751180511019  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         foldback        0.0051    2228            12.683751180510981  235   497         732       235
+  foldback-lqr-start                    4320         foldback        0.0051    2316            11.580066231058726  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.387276545523914  0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.31231293285616   0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
+  longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
+  low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
+  non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
+
+Large deletion, should be catchable by relaxing intercept epsilon:
+
+  $ minimera --intercept-epsilon 80
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.324421040730403  0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         foldback        0.0052    1946            19.38845392089536   0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
+  foldback-lqr-end                      4320         foldback        0.0051    1996            11.580066231058375  323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         foldback        0.0051    1993            9.33420463893992    626   1997        2623      626
+  foldback-lqr-post-gap                 4229         foldback        0.0051    1993            12.683751180511019  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         foldback        0.0051    2228            12.683751180510981  235   497         732       235
+  foldback-lqr-start                    4320         foldback        0.0051    2316            11.580066231058726  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.387276545523914  0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.31231293285616   0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
+  low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
+  non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
+
+Minimum foldback size:
+
+  $ minimera --minimum-cluster-length 20
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.324421040730403  0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
+  foldback-lqr-end                      4320         foldback        0.0051    1996            11.580066231058375  323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         foldback        0.0051    1993            9.33420463893992    626   1997        2623      626
+  foldback-lqr-post-gap                 4229         foldback        0.0051    1993            12.683751180511019  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         foldback        0.0051    2228            12.683751180510981  235   497         732       235
+  foldback-lqr-start                    4320         foldback        0.0051    2316            11.580066231058726  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.387276545523914  0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.31231293285616   0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
+  low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
+  non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         foldback        0.0178    1076            19.351950370689455  0                           0
+
+  $ minimera --minimum-cluster-length 20 --minimum-foldback-length-absolute 200
+  $ results
+  read-id                               read-length  classification  monotony  foldback-point  mean-qscore         llqr  llqr-start  llqr-end  lq-total
+  481e3d07-9220-434e-9372-d54ff402bf6d  2500         normal          0.0081                    19.324421040730403  0                           0
+  6fc48967-2e65-4e92-9c77-6e86e55238d6  2500         normal          0.0079                    19.346002226031022  0                           0
+  7e04aba5-e7b1-468a-9319-17110f10f284  2500         normal          0.0099                    19.358222597036377  0                           0
+  8d1cadec-dbe5-4668-b9ae-60027aead0a8  2500         normal          0.0080                    19.344128583944823  0                           0
+  big-deletion                          3900         normal          0.0052                    19.38845392089536   0                           0
+  cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
+  cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
+  foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
+  foldback-lqr-end                      4320         foldback        0.0051    1996            11.580066231058375  323   3997        4320      323
+  foldback-lqr-mid-gap                  4620         foldback        0.0051    1993            9.33420463893992    626   1997        2623      626
+  foldback-lqr-post-gap                 4229         foldback        0.0051    1993            12.683751180511019  235   3497        3732      235
+  foldback-lqr-pre-gap                  4229         foldback        0.0051    2228            12.683751180510981  235   497         732       235
+  foldback-lqr-start                    4320         foldback        0.0051    2316            11.580066231058726  323   0           323       323
+  foldback-no-lqr                       4000         foldback        0.0051    1996            19.387276545523914  0                           0
+  foldback-tandem-rc-dup                3560         normal          0.0085                    19.31231293285616   0                           0
+  full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
+  gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
+  gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
+  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
+  low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
+  low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
+  monotonous-read                       60007        failed          0.7926                    19.524198987162304  0                           0
+  non-foldback                          2800         normal          0.0073                    19.355641445904553  0                           0
+  non-foldback-tandem-rc-dup            2300         normal          0.0108                    19.350417940453735  0                           0
+  partial-foldback                      1700         foldback        0.0122    1196            19.344804016260536  0                           0
+  small-foldback-160bp-total            1160         normal          0.0178                    19.351950370689455  0                           0
+
+Make sure we can still successfully plot things:
+
+  $ minimera --plot-foldbacks
+  $ find out/plots | sort
+  out/plots
+  out/plots/foldback-longboi.png
+  out/plots/foldback-lqr-end.png
+  out/plots/foldback-lqr-mid-gap.png
+  out/plots/foldback-lqr-post-gap.png
+  out/plots/foldback-lqr-pre-gap.png
+  out/plots/foldback-lqr-start.png
+  out/plots/foldback-no-lqr.png
+  out/plots/full-foldback.png
+  out/plots/gapped-foldback.png
+  out/plots/gapped-partial-foldback.png
+  out/plots/partial-foldback.png
