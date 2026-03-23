@@ -31,10 +31,7 @@ minimera <(clean_fastq) \
     --plot-foldbacks \
     --plot-normal \
     --min-qscore 0 \
-    --low-quality-threshold 4 \
-    --foldback-position-epsilon 100 \
-    # --annotations "$HOME/src/minimera/contrib/annotations.fasta" \
-    # "$@"
+    "$@"
 
 
 cp  "$scratch"/plots/"$id".png \

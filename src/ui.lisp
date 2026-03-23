@@ -38,7 +38,9 @@
    ~@
    9. llqr-end: end of the longest low-quality region, blank if none exists~@
    ~@
-   10. processing-time-microsec: how long minimera took to process this read~@
+   10. lq-total: number of bases in all low-quality regions in the read~@
+   ~@
+   11. processing-time-microsec: how long minimera took to process this read~@
    ~@
    New columns may be added after these in future versions of Minimera, so when ~
    processing foldbacks.csv make sure to allow extra columns if you want to ~
@@ -107,12 +109,12 @@
 
 (defparameter *o/foldback-position-epsilon*
   (adopt:make-option 'foldback-position-epsilon
-    :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 50)."
+    :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 80)."
     :terse "Max beginning/end distance for clustering"
     :long "foldback-position-epsilon"
     :parameter "N"
     :reduce #'adopt:last
-    :initial-value 50
+    :initial-value 80
     :key #'parse-integer))
 
 (defparameter *o/intercept-epsilon*
@@ -231,14 +233,6 @@
     :help-no "Do not generate plots for non-foldback reads (the default)."
     :terse-no "Don't generate plots for non-foldbacks"))
 
-(defparameter *o/plot/annotations*
-  (adopt:make-option 'annotations
-    :help "Path to FASTA file with sequences used for annotations on plots (default none)."
-    :terse "Annotations FASTA path"
-    :long "annotations"
-    :parameter "PATH"
-    :reduce #'adopt:last
-    :initial-value nil))
 
 (adopt:defparameters (*o/progress* *o/no-progress*)
   (adopt:make-boolean-options 'progress
@@ -248,6 +242,35 @@
     :help-no "Do not report progress."
     :terse-no "Don't report progress"
     :initial-value t))
+
+
+(defparameter *o/debug*
+  (adopt:make-option 'debug
+    :help "Show debug options in --help."
+    :terse "Show debug options"
+    :long "debug"
+    :hidden t
+    :reduce (constantly t)
+    :initial-value nil))
+
+(defparameter *o/debug/identity*
+  (adopt:make-option 'debug-identity
+    :help "Run minimera on the read vs itself, instead of the read vs its reverse complement.  Useful mostly for plotting a non-foldback read's structure."
+    :terse "Do not revcomp read."
+    :long "debug-identity"
+    :hidden t
+    :reduce (constantly t)
+    :initial-value nil))
+
+(defparameter *o/debug/annotations*
+  (adopt:make-option 'annotations
+    :help "Path to FASTA file with sequences used for annotations on plots (default none)."
+    :terse "Annotations FASTA path"
+    :long "debug-annotations"
+    :parameter "PATH"
+    :hidden t
+    :reduce #'adopt:last
+    :initial-value nil))
 
 
 (defparameter *examples*
@@ -300,8 +323,14 @@
             :options (list *o/plot/foldbacks*
                            *o/plot/no-foldbacks*
                            *o/plot/normal*
-                           *o/plot/no-normal*
-                           *o/plot/annotations*)))))
+                           *o/plot/no-normal*))
+          (adopt:make-group 'debug
+            :title "Debug Options"
+            :hidden t
+            :help "Options you probably shouldn't use unless you really know what you're doing."
+            :options (list *o/debug*
+                           *o/debug/identity*
+                           *o/debug/annotations*)))))
 
 
 (defun toplevel (&optional argv)
@@ -309,7 +338,7 @@
   (adopt::quit-on-ctrl-c ()
     (multiple-value-bind (arguments options) (adopt:parse-options-or-exit *ui*)
       (cond ((gethash 'help options)
-             (adopt:print-help-and-exit *ui* :option-width 21))
+             (adopt:print-help-and-exit *ui* :include-hidden (gethash 'debug options)))
             ((gethash 'version options)
              (format t "minimera ~A~%" *version*)
              (adopt:exit)))
@@ -333,7 +362,8 @@
         *plot-normal* (gethash 'plot-normal options)
         *output-directory* (gethash 'output-directory options)
         *report-progress* (gethash 'progress options)
-        *annotation-path* (gethash 'annotations options))
+        *annotation-path* (gethash 'annotations options)
+        *debug-identity* (gethash 'debug-identity options))
       (handler-case
           (progn
             (assert *output-directory* () "Output directory must be specified.")

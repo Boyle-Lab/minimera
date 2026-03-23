@@ -7,7 +7,7 @@
 (defparameter *k* 8)
 (defparameter *w* 16)
 
-(defparameter *foldback-position-epsilon* 50)
+(defparameter *foldback-position-epsilon* 80)
 (defparameter *intercept-epsilon* 30)
 (defparameter *gap-epsilon* 300)
 (defparameter *minimum-cluster-length* 40)
@@ -20,7 +20,7 @@
 
 (defparameter *plot-foldbacks* nil)
 (defparameter *plot-normal* nil)
-(defparameter *low-quality-threshold* 3)
+(defparameter *low-quality-threshold* 4)
 (defparameter *low-quality-window-size* 10)
 
 (defparameter *worker-threads* 6)
@@ -29,6 +29,8 @@
 (defparameter *annotation-tracks* (list))
 (defparameter *report-progress* t)
 (defparameter *interactive* t)
+
+(defparameter *debug-identity* nil)
 
 
 ;;;; Types --------------------------------------------------------------------
@@ -456,53 +458,6 @@
                         (if truncate-read (- len 60) len)))
                0.0d0))))
 
-(defun compute-llqr (quality-scores &key
-                     (window-size *low-quality-window-size*)
-                     (low-quality-threshold *low-quality-threshold*))
-  "Return the longest low-quality region in `quality-scores`."
-  (declare (optimize (speed 3) (space 1) (safety 1) (debug 1)))
-  (check-type quality-scores a8)
-  (check-type low-quality-threshold (integer 0 60))
-  (check-type window-size (integer 1 4096))
-  (flet ((q->p% (q) (q->p q))) ; only inline the lookup table once
-    (iterate
-      (declare (type fixnum       q run i w w-1 best best-end)
-               (type double-float p sum sum-threshold))
-
-      (with w = window-size)
-      (with w-1 = (1- window-size))
-      (with sum = 0.0d0)
-      (with sum-threshold = (* w (q->p% low-quality-threshold)))
-      (with best = 0)
-      (with best-end = -1)
-      (with run = 0)
-
-      (for q :in-vector quality-scores :with-index i)
-      (for p = (q->p% q))
-
-      (incf sum p)
-
-      (cond ((< i w-1) (next-iteration))
-            ((>= i w) (decf sum (q->p% (aref quality-scores (- i w))))))
-
-      (if (> sum sum-threshold) ; in p(error) space, higher is *worse*
-        (incf run)
-        (setf run 0))
-
-      (when (> run best)
-        (setf best run
-              best-end (1+ i)))
-
-      (finally (return
-                 (if (plusp best)
-                   ;; Convert length in windows to length/coords in bases.
-                   (let* ((region-length (+ best w-1))
-                          (region-end best-end)
-                          (region-start (- region-end region-length)))
-                     (declare (type fixnum region-length region-start region-end))
-                     (values region-length region-start region-end))
-                   (values 0 nil nil)))))))
-
 (defun merge-overlapping-lqrs (lqrs)
   (iterate
     (with lqrs% = lqrs)
@@ -583,6 +538,9 @@
 (defun revcomp-lqrs (read-length lqrs)
   (nreverse (mapcar (curry #'revcomp-lqr read-length) lqrs)))
 
+(defun lqr-length (lqr)
+  "Return the length (in base pairs) of the LQR."
+  (- (cdr lqr) (car lqr)))
 
 (defun splice-lqrs (lqrs sequence)
   (iterate
@@ -619,6 +577,10 @@
           :do (setf ; todo make this less slow
                 (hit-l1 hit) (unsplice-position id-lqrs (hit-l1 hit))
                 (hit-l2 hit) (unsplice-position rc-lqrs (hit-l2 hit))))))
+
+
+(defun find-llqr (lqrs)
+  (alexandria:extremum lqrs #'> :key :lqr-len))
 
 
 ;;;; Plotting -----------------------------------------------------------------
@@ -717,7 +679,6 @@
          (minimizers (read-minimizers result))
          (lqrs (lqrs result))
          (llqr (llqr result))
-         (lq-total (reduce #'+ lqrs :key (lambda (lqr) (- (cdr lqr) (car lqr)))))
          ;; (llqr-start (llqr-start result))
          ;; (llqr-end (llqr-end result))
          (annotation-track-height 14)
@@ -846,8 +807,9 @@
                        (base->y (cdr lqr))))
           (draw x y #xFF #xE0 #xE0)))
       ;; Title
-      (draw-string tix tiy (format nil "Read ~A (~A)"
-                                   id (string-downcase (classification result))))
+      (draw-string tix tiy (format nil "Read ~A (~A)~:[~; (IDENTITY MODE)~]"
+                                   id (string-downcase (classification result))
+                                   *debug-identity*))
       ;; Legend
       (draw-string lg1x lg1y (format nil "tics = ~:Dbp, read length = ~:D, ~A"
                                      tic-bases len
@@ -857,7 +819,7 @@
       (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqr = ~D, lq bases = ~D, monotony = ~,2F"
                                      (mean-qscore result)
                                      llqr
-                                     lq-total
+                                     (lq-total result)
                                      (monotony result)))
       (if (not has-minimizers)
         (let ((y msy))
@@ -898,13 +860,13 @@
             (doseq (hit hits)
               (let ((cluster (gethash hit idx)))
                 (unless cluster
-                  (draw-unclustered-point (hit-y hit) (hit-x hit)))))
+                  (draw-unclustered-point (hit-x hit) (hit-y hit)))))
             ;; Clustered hits
             (doseq (hit hits)
               (let ((cluster (gethash hit idx)))
                 (when cluster
                   (multiple-value-call #'draw-point
-                    (hit-y hit) (hit-x hit) (cluster-color cluster))))))))
+                    (hit-x hit) (hit-y hit) (cluster-color cluster))))))))
       ;; Annotation tracks
       (loop :for track in *annotation-tracks*
             :for y :from apys :by annotation-track-height
@@ -982,6 +944,7 @@
    llqr
    (llqr-start :initform nil)
    (llqr-end :initform nil)
+   lq-total
    processing-time))
 
 (defun foldbackp (result)
@@ -990,57 +953,65 @@
 
 (defun process-read% (id sequence quality-scores)
   (check-type sequence a8)
-  (multiple-value-bind (llqr llqr-start llqr-end)
-      (compute-llqr quality-scores)
-    (let* ((lqrs (progn (compute-lqrs quality-scores)
-                        ))
-           (spliced-sequence (splice-lqrs lqrs sequence))
-           (read-length (length sequence))
-           (spliced-read-length (length spliced-sequence))
-           (m1 (minimizers *k* *w* spliced-sequence))
-           (monotony (estimate-monotony m1))
-           (mean-qscore (compute-mean-qscore quality-scores))
-           (skip-reasons (list)))
-      (when (>= monotony *monotony-threshold*)
-        (push :monotony skip-reasons))
-      (when (< mean-qscore *minimum-qscore*)
-        (push :qscore skip-reasons))
-      (if skip-reasons
+  (let* ((lqrs (compute-lqrs quality-scores))
+         (llqr (find-llqr lqrs))
+         (llqr-len (when llqr (lqr-length llqr)))
+         (llqr-start (when llqr (car llqr)))
+         (llqr-end (when llqr (cdr llqr)))
+         (lq-total (reduce #'+ lqrs :key #'lqr-length))
+         (spliced-sequence (splice-lqrs lqrs sequence))
+         (read-length (length sequence))
+         (spliced-read-length (length spliced-sequence))
+         (m1 (minimizers *k* *w* spliced-sequence))
+         (monotony (estimate-monotony m1))
+         (mean-qscore (compute-mean-qscore quality-scores))
+         (skip-reasons (list)))
+    (when (>= monotony *monotony-threshold*)
+      (push :monotony skip-reasons))
+    (when (< mean-qscore *minimum-qscore*)
+      (push :qscore skip-reasons))
+    (if skip-reasons
+      (make-instance 'minimera-result
+        :read-id id
+        :read-length read-length
+        :read-minimizers m1
+        :classification :failed
+        :monotony monotony
+        :mean-qscore mean-qscore
+        :skip-reasons skip-reasons
+        :lqrs lqrs
+        :llqr llqr-len
+        :llqr-start llqr-start
+        :llqr-end llqr-end
+        :lq-total lq-total)
+      (let* ((m2 (minimizers *k* *w*
+                             ;; if --debug-identity, plot just a read vs itself without revcomping
+                             (if *debug-identity*
+                               spliced-sequence
+                               ;; CAREFUL HERE, the nreverse breaks using this function interactively
+                               (nreverse-complement-bytes spliced-sequence))))
+             (hits (hits m1 m2))
+             (clusters (cluster hits))
+             (results (find-foldback-clusters spliced-read-length clusters))
+             (result (alexandria:extremum results #'> :key #'cluster-lengths))
+             (classification (if result :foldback :normal))
+             (foldback-position (when result
+                                  (unsplice-position lqrs (compute-foldback-position result)))))
         (make-instance 'minimera-result
           :read-id id
           :read-length read-length
           :read-minimizers m1
-          :classification :failed
+          :classification classification
           :monotony monotony
           :mean-qscore mean-qscore
-          :skip-reasons skip-reasons
           :lqrs lqrs
-          :llqr llqr
+          :llqr llqr-len
           :llqr-start llqr-start
-          :llqr-end llqr-end)
-        ;; CAREFUL HERE, this nreverse breaks using this function interactively
-        (let* ((m2 (minimizers *k* *w* (nreverse-complement-bytes spliced-sequence)))
-               (hits (hits m1 m2))
-               (clusters (cluster hits))
-               (results (find-foldback-clusters spliced-read-length clusters))
-               (result (alexandria:extremum results #'> :key #'cluster-lengths))
-               (classification (if result :foldback :normal))
-               (foldback-position (when result
-                                    (unsplice-position lqrs (compute-foldback-position result)))))
-          (make-instance 'minimera-result
-            :read-id id
-            :read-length read-length
-            :read-minimizers m1
-            :classification classification
-            :monotony monotony
-            :mean-qscore mean-qscore
-            :lqrs lqrs
-            :llqr llqr
-            :llqr-start llqr-start
-            :llqr-end llqr-end
-            :foldback-point foldback-position
-            :foldback-hits hits
-            :foldback-clusters clusters))))))
+          :llqr-end llqr-end
+          :lq-total lq-total
+          :foldback-point foldback-position
+          :foldback-hits hits
+          :foldback-clusters clusters)))))
 
 (defun process-read (id sequence quality-scores)
   (let ((result (process-read% id sequence quality-scores)))
@@ -1062,6 +1033,7 @@
         "llqr"
         "llqr-start"
         "llqr-end"
+        "lq-total"
         "processing-time-microsec"))
 
 
@@ -1077,6 +1049,7 @@
                             (princ-to-string (llqr result))
                             (princ-to-string (or (llqr-start result) ""))
                             (princ-to-string (or (llqr-end result) ""))
+                            (princ-to-string (lq-total result))
                             (princ-to-string (processing-time result)))
                       csv-stream))
 

@@ -5,4 +5,4 @@
 
 set -eu
 
-pbpaste | minimera-stdin.sh
+pbpaste | minimera-stdin.sh "$@"

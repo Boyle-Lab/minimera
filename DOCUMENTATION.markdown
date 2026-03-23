@@ -108,7 +108,7 @@ normal or foldback chimeric reads.
 *   `--foldback-position-epsilon=N`
 
     How close (in base pairs) a cluster must be to the beginning of read 2 and
-    end of read 1 to be considered as a foldback cluster (default: 50).
+    end of read 1 to be considered as a foldback cluster (default: 80).
 
 *   `--intercept-epsilon=N`
 
@@ -170,11 +170,6 @@ these plots is slow, but they can be useful to debug edge cases.
 *   `--no-plot-normal`
 
     Do not generate plots for non\-foldback reads (the default).
-
-*   `--annotations=PATH`
-
-    Path to FASTA file with sequences used for annotations on plots (default
-    none).
 
 
 ## Examples
