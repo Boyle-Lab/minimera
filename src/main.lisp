@@ -303,15 +303,10 @@
       (for next-hit = (if (= i last-i)
                         nil
                         (aref hits next-i)))
-      ;; (for stop = (or (null next-hit)
-      ;;                 (> (hit-c next-hit) 500)))
       (when (or (null next-hit)
-                ;; stop
                 (> (- (hit-c next-hit) (hit-c hit)) epsilon))
         (collect (subseq hits start next-i) :into results)
         (setf start next-i))
-      ;; (when stop
-      ;;   (finish))
       (returning (filter-clusters results min-length)))))
 
 
@@ -836,9 +831,13 @@
                          :centered t)
             (incf y 13)))
         (progn
-          ;; X/Y axes and tic marks
-          (do-range ((x mpxs mpxe)) (draw x mpye #x66))
-          (do-range ((y mpys mpye)) (draw mpxs y #x66))
+          ;; X/Y axes, foldback position marks, and tic marks
+          (do-range ((x mpxs mpxe))
+            (draw x mpye #x66)
+            (draw x (base->y *foldback-position-epsilon*) #xBB #xBB #xFF))
+          (do-range ((y mpys mpye))
+            (draw mpxs y #x66)
+            (draw (base->x (- len *foldback-position-epsilon*)) y #xBB #xBB #xFF))
           (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
                    (loop :for ty :from mpye
                          :repeat tic-length
