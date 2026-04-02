@@ -165,6 +165,8 @@
 
 
 ;;;; Minimizer Hits/Matches ---------------------------------------------------
+(declaim (inline hit-l1 hit-l2 hit-c hit<))
+
 (defstruct (hit (:constructor make-hit (c l1 l2)))
   (c nil :type fixnum)
   (l1 nil :type fixnum)
@@ -199,17 +201,18 @@
   The vector will be sorted in parameter-space-intercept-order.
 
   "
-  (let ((index-1 (group-by #'hash ms1 :test #'equal :map #'pos))
-        (index-2 (group-by #'hash ms2 :test #'equal :map #'pos)))
-    (_ (iterate
-         (for (minimizer locs-1) :in-hashtable index-1)
-         (for locs-2 = (gethash minimizer index-2))
-         (appending (alexandria:map-product (lambda (l1 l2)
-                                              (make-hit (- l2 l1) l1 l2))
-                                            locs-1 locs-2)
-                    :into result)
-         (returning (sort (coerce result 'vector) #'hit<))))))
-
+  (declare (optimize (speed 3) (safety 1) (debug 1) (space 0)))
+  (let ((index-2 (make-hash-table :test #'eql :size 256)))
+    (dolist (m ms2)
+      (push (pos m) (gethash (hash m) index-2)))
+    (iterate
+      (for m :in ms1)
+      (for l1 = (pos m))
+      (dolist (l2 (gethash (hash m) index-2))
+        (declare (type fixnum l1 l2))
+        (collect (make-hit (- l2 l1) l1 l2) :into result
+                 :result-type '(simple-array hit (*))))
+      (returning (sort result #'hit<)))))
 
 ;;;; Clustering ---------------------------------------------------------------
 (defun break-gaps (cluster)
@@ -281,7 +284,9 @@
 
 (defun filter-clusters (clusters min-length)
   "Return a list of clusters, with gaps broken and small clusters removed."
+  (declare (optimize (speed 3) (safety 1) (debug 1) (space 0)))
   (let* ((deduped (mapcar (lambda (cluster)
+                            (check-type cluster (simple-array hit (*)))
                             (longest-increasing-subsequence
                               (sort cluster #'< :key #'hit-l1)))
                           clusters))
@@ -295,7 +300,8 @@
   "Cluster the sorted `hits`, returning a list of vectors of `hit`s."
   (unless (zerop (length hits))
     (iterate
-      (with last-i = (1- (length hits)))
+      (with length = (length hits))
+      (with last-i = (1- length))
       (with start = 0)
       (with epsilon = *intercept-epsilon*)
       (for hit :in-vector hits :with-index i)
@@ -305,7 +311,12 @@
                         (aref hits next-i)))
       (when (or (null next-hit)
                 (> (- (hit-c next-hit) (hit-c hit)) epsilon))
-        (collect (subseq hits start next-i) :into results)
+        (when (>= (- (or next-i length) start) min-length)
+          ;; We filter on min-length later after solving LIS, but we may as well
+          ;; do it here too.  The clusters will never get *longer*, so this will
+          ;; save us wasting time on tiny clusters that have no hope of
+          ;; surviving filtering anyway.
+          (collect (subseq hits start next-i) :into results))
         (setf start next-i))
       (returning (filter-clusters results min-length)))))
 
@@ -474,7 +485,7 @@
   Each region is a cons of `(start . end)`.
 
   "
-  (declare (optimize (speed 3) (space 1) (safety 1) (debug 1)))
+  (declare (optimize (speed 3) (safety 1) (debug 1) (space 0)))
   (check-type quality-scores a8)
   (check-type low-quality-threshold (integer 0 60))
   (check-type window-size (integer 1 4096))
@@ -1069,6 +1080,13 @@
     (setf (processing-time result) processing-time)
     result))
 
+(defun bench (filename &key n &aux (i 0))
+  (with-open-file (stream filename :element-type 'u8)
+    (faster:map-fastq (lambda (fastq-read)
+                        (work% fastq-read)
+                        (when (and n (>= (incf i) n))
+                          (return-from bench)))
+                      stream)))
 
 (defun run (filename)
   (when *annotation-path*
