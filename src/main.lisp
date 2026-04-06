@@ -617,6 +617,20 @@
     (t 10000)))
 
 
+(defparameter *y-label-hack*
+  ;; I know, I know
+  #2A(
+    (1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+    (1 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0)
+    (1 0 0 0 1 0 0 1 1 1 0 0 1 0 0 0 1 0 0 1 1 1 0 0 1 0 1 1 0 0 1 1 1 1 0 0 1 1 1 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1 1 1 0 0 1 0 1 1 1 1 0 0 1 1 1 1 0 0 1 0 0 0 1 1 1 0 0 1 0 1 1 1 1 0 0 0 1 1 1 0 0 1 0 1 1 0 0 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0)
+    (1 0 0 0 1 0 1 0 0 0 1 0 1 0 0 0 1 0 1 0 0 0 1 0 1 1 0 0 0 1 0 0 0 0 0 1 0 0 0 1 0 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 1 0 1 1 0 1 0 0 1 0 1 0 0 0 1 0 1 0 0 1 0 0 0 1 0 1 1 0 1 0 0 1 0 1 0 0 0 1 0 1 1 0 0 1 0 0 1 0 0 0 0 0 0 0 0 1 1 1 1 1 0 0 0 1)
+    (1 1 1 1 0 0 1 1 1 1 1 0 1 0 0 0 1 0 1 1 1 1 1 0 1 0 0 0 0 0 1 1 1 0 0 1 1 1 1 1 0 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 1 0 1 0 0 1 0 0 1 0 1 0 0 0 1 0 1 0 0 1 1 1 1 1 0 1 0 0 1 0 0 1 0 1 1 1 1 1 0 1 0 0 0 1 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0)
+    (1 0 0 0 1 0 1 0 0 0 0 0 0 1 0 1 0 0 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 1 0 1 0 0 1 0 0 1 0 1 0 0 0 1 0 1 0 0 1 0 0 0 0 0 1 0 0 1 0 0 1 0 1 0 0 0 0 0 1 0 0 0 1 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0)
+    (1 0 0 0 1 0 0 1 1 1 0 0 0 0 1 0 0 0 0 1 1 1 0 0 1 0 0 0 0 1 1 1 1 0 0 0 1 1 1 0 0 0 0 0 0 0 0 1 1 1 1 0 0 1 1 1 0 0 1 0 0 1 0 0 1 0 1 1 1 1 0 0 0 1 0 0 1 1 1 0 0 1 0 0 1 0 0 1 0 0 1 1 1 0 0 1 0 0 0 1 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+    (0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+    (0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+    ))
+
 (defun-inline cluster-color (cluster)
   (case cluster
     ((nil) (values #x00 #x00 #x00))
@@ -717,7 +731,7 @@
          (apx pad)
          (apxs (+ apx 0))
          (apxe (+ apx apw))
-         (apy (+ mph (* 2 pad) -6))
+         (apy (+ mph pad pad pad/2 -6))
          (apys (+ apy 0))
          ;; (apye (+ apy aph))
          (qpw (- size (* 2 pad))) ; quality plot
@@ -727,11 +741,11 @@
          (qpxe (+ qpx qpw))
          (qpy (if has-annotations
                 (+ apy aph pad/4)
-                (+ mpye pad/2)))
+                (+ mpye pad)))
          (qpys (+ qpy 0))
          (qpye (+ qpy qph))
          (lgh pad) ; legend
-         (h (+ pad mph pad (if has-annotations (+ aph pad/2) 0) qph lgh))
+         (h (+ pad mph pad pad/2 (if has-annotations (+ aph pad) 0) qph lgh))
          (lg1x 5)
          (lg1y (- h pad))
          (lg2x 5)
@@ -857,6 +871,15 @@
                    (loop :for tx :downfrom mpxs
                          :repeat tic-length
                          :do (draw tx ty #x66)))
+          (draw-string mpxs (+ tic-length mpye 2) "Original Read ->")
+          (iterate
+            (with (rs cs) = (array-dimensions *y-label-hack*))
+            (for r :from 0 :below rs)
+            (for x :from (- mpxs tic-length 10))
+            (iterate (for c :from 0 :below cs)
+                     (for y :downfrom mpye)
+                     (when (plusp (aref *y-label-hack* r c))
+                       (draw x y #x00))))
           ;; Draw dashed line at foldback point
           (when foldback-point
             (iterate (with x = (base->x foldback-point))
