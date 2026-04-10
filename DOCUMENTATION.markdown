@@ -1,6 +1,6 @@
 # minimera
 
-USAGE: `minimera [OPTIONS] \-\-output=PATH FASTQ`
+USAGE: `minimera [OPTIONS] --output=PATH FASTQ`
 
 Minimera is a tool for detecting foldback chimeric and other problematic reads
 in Oxford Nanopore data using minimizers.
