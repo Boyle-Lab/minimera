@@ -109,7 +109,7 @@
 
 (defparameter *o/foldback-position-epsilon*
   (adopt:make-option 'foldback-position-epsilon
-    :help "How close (in base pairs) a cluster must be to the beginning of read 2 and end of read 1 to be considered as a foldback cluster (default: 80)."
+    :help "How close (in base pairs) a cluster must be to the beginning/end of the reads to be considered as a foldback cluster (default: 80)."
     :terse "Max beginning/end distance for clustering"
     :long "foldback-position-epsilon"
     :parameter "N"

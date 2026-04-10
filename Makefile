@@ -2,9 +2,9 @@
 
 binary: build/minimera
 
-all: build/minimera build/minimera.1 build/minimera.sif
+all: build/minimera build/minimera.1 build/minimera.sif DOCUMENTATION.markdown
 
-contrib: build/qfq build/fastq-stats build/minimera.fish
+contrib: build/fastq-stats build/minimera.fish
 
 # Config ----------------------------------------------------------------------
 lisps := $(shell ffind '\.(asd|lisp)$$')
@@ -26,20 +26,18 @@ build/minimera.sif: build/minimera build/minimera.1 contrib/minimera.def
 	mkdir -p build/
 	singularity build --force --fakeroot build/minimera.sif contrib/minimera.def
 
+DOCUMENTATION.markdown: Makefile src/ui.lisp build-manual.lisp
+	sbcl --disable-debugger --load "build-manual.lisp" --quit
+
 # Releases --------------------------------------------------------------------
 release: build/minimera build/minimera.1 build/minimera.fish build/minimera.sif build-release.sh Makefile
 	mkdir -p build/
 	./build-release.sh
 
-# Contrib #--------------------------------------------------------------------
-#
+# Contrib ---------------------------------------------------------------------
 build/minimera.fish: $(lisps) Makefile
 	mkdir -p build/
 	sbcl --disable-debugger --load "build-manual.lisp" --quit
-
-build/qfq: contrib/qfq.lisp Makefile
-	mkdir -p build/
-	sbcl --disable-debugger --load "contrib/qfq.lisp" --eval "(quick-fastq:build)" --quit
 
 build/fastq-stats: contrib/fastq-stats.lisp Makefile
 	mkdir -p build/

@@ -109,8 +109,8 @@ normal or foldback chimeric reads.
 
 *   `--foldback-position-epsilon=N`
 
-    How close (in base pairs) a cluster must be to the beginning of read 2 and
-    end of read 1 to be considered as a foldback cluster (default: 80).
+    How close (in base pairs) a cluster must be to the beginning/end of the
+    reads to be considered as a foldback cluster (default: 80).
 
 *   `--intercept-epsilon=N`
 
