@@ -130,7 +130,7 @@ Run on a FASTQ with some examples:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
@@ -153,7 +153,7 @@ Disable LQR computation and splicing by making the threshold 0:
   cae458a3-0575-4f91-870d-8657ba1e74fa  2500         normal          0.0079                    19.368226451679934  0                           0
   cfb7c61a-033b-4085-b79a-eb293b2e1362  500          normal          0.0200                    19.393533364827064  0                           0
   foldback-longboi                      127949       foldback        0.0069    63970           19.3547015335795    0                           0
-  foldback-lqr-end                      4320         normal          0.0047                    11.580066231058375  0                           0
+  foldback-lqr-end                      4320         foldback        0.0047    1996            11.580066231058375  0                           0
   foldback-lqr-mid-gap                  4620         normal          0.0044                    9.33420463893992    0                           0
   foldback-lqr-post-gap                 4229         normal          0.0048                    12.683751180511019  0                           0
   foldback-lqr-pre-gap                  4229         normal          0.0048                    12.683751180510981  0                           0
@@ -163,7 +163,7 @@ Disable LQR computation and splicing by making the threshold 0:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0208                    9.501463163531792   0                           0
@@ -196,7 +196,7 @@ Mean qscore filtering:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          failed          0.0168                    9.501463163531792   102   443         545       122
@@ -227,7 +227,7 @@ Mean qscore filtering:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          failed          0.0168                    9.501463163531792   102   443         545       122
@@ -260,7 +260,7 @@ Simple vs Dorado qscore computation:
   full-foldback                         2400         foldback        0.0106    1196            19.325967721237447  0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.366952124571707  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.3858496016426    0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.378776148021696  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.378776148021696  0                           0
   longboi                               120000       normal          0.0067                    19.35717157042798   0                           0
   low-quality-first-bases               860          normal          0.0242                    39.99999999999993   0                           0
   low-quality-regions                   712          normal          0.0168                    9.155980411022364   102   443         545       122
@@ -326,7 +326,7 @@ Large deletion, should be catchable by relaxing intercept epsilon:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
@@ -359,7 +359,7 @@ Minimum foldback size:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
@@ -390,7 +390,7 @@ Minimum foldback size:
   full-foldback                         2400         foldback        0.0106    1196            19.32442732791359   0                           0
   gapped-foldback                       2200         foldback        0.0092    1097            19.365481608591153  0                           0
   gapped-partial-foldback               1600         foldback        0.0125    1097            19.391866552150862  0                           0
-  large-end-gap-foldback                1720         normal          0.0119                    19.385025174302978  0                           0
+  large-end-gap-foldback                1720         foldback        0.0119    796             19.385025174302978  0                           0
   longboi                               120000       normal          0.0067                    19.35712473520419   0                           0
   low-quality-first-bases               860          normal          0.0242                    20.517717560934877  0                           0
   low-quality-regions                   712          normal          0.0168                    9.501463163531792   102   443         545       122
@@ -415,4 +415,5 @@ Make sure we can still successfully plot things:
   out/plots/full-foldback.png
   out/plots/gapped-foldback.png
   out/plots/gapped-partial-foldback.png
+  out/plots/large-end-gap-foldback.png
   out/plots/partial-foldback.png

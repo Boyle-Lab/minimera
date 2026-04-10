@@ -341,9 +341,13 @@
 (defun region-in-foldback-position-p (read-length cluster)
   "Return whether `cluster`'s region is in the expected position for a foldback region."
   (multiple-value-bind (r1s r1e r2s r2e) (cluster-bounds cluster)
-    (declare (ignore r1s r2e))
-    (and (<= (abs (- r2s 0)) *foldback-position-epsilon*)
-         (<= (abs (- r1e read-length)) *foldback-position-epsilon*))))
+    (let ((limit *foldback-position-epsilon*))
+      (or ;; end-truncated foldbacks
+          (and (<= (abs (- r2s 0)) limit)
+               (<= (abs (- r1e read-length)) limit))
+          ;; end-extended foldbacks
+          (and (<= (abs (- r1s 0)) limit)
+               (<= (abs (- r2e read-length)) limit))))))
 
 (defun region-long-enough-p (read-length cluster)
   "Return whether `cluster`'s region is long enough for a foldback region."
@@ -859,9 +863,11 @@
           ;; X/Y axes, foldback position marks, and tic marks
           (do-range ((x mpxs mpxe))
             (draw x mpye #x66)
-            (draw x (base->y *foldback-position-epsilon*) #xBB #xBB #xFF))
+            (draw x (base->y *foldback-position-epsilon*)         #xBB #xBB #xFF)
+            (draw x (base->y (- len *foldback-position-epsilon*)) #xBB #xBB #xFF))
           (do-range ((y mpys mpye))
             (draw mpxs y #x66)
+            (draw (base->x *foldback-position-epsilon*)         y #xBB #xBB #xFF)
             (draw (base->x (- len *foldback-position-epsilon*)) y #xBB #xBB #xFF))
           (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
                    (loop :for ty :from mpye
