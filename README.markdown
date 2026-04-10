@@ -24,6 +24,12 @@ Singularity containers.
 
 [releases]: https://github.com/Boyle-Lab/minimera/releases
 
+## Changelog
+
+### v0.4.0
+
+Initial beta version.  Still under development, things may change.
+
 ## Building
 
 If you just want to *use* Minimera you don't need to build it from scratch.  You

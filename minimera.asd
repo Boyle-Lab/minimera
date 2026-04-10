@@ -4,7 +4,7 @@
   :homepage "https://github.com/Boyle-Lab/minimera"
 
   :license "GPL-3.0-or-later"
-  :version "0.3.1"
+  :version "0.4.0"
 
   :depends-on (:adopt
                :alexandria
