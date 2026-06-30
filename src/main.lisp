@@ -14,6 +14,7 @@
 (defparameter *minimum-foldback-length-absolute* 50)
 (defparameter *minimum-foldback-length-relative* 0.05)
 
+(defparameter *monotony-min-length* 1000)
 (defparameter *monotony-threshold* 0.50)
 (defparameter *minimum-qscore* 9.0)
 (defparameter *dorado-mean-qscore* nil)
@@ -1005,7 +1006,8 @@
          (monotony (estimate-monotony m1))
          (mean-qscore (compute-mean-qscore quality-scores))
          (skip-reasons (list)))
-    (when (>= monotony *monotony-threshold*)
+    (when (and (>= read-length *monotony-min-length*)
+               (>= monotony *monotony-threshold*))
       (push :monotony skip-reasons))
     (when (< mean-qscore *minimum-qscore*)
       (push :qscore skip-reasons))

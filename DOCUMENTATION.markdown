@@ -92,6 +92,15 @@ generating minimizers.
     Monotony score above which reads will be classified as failed and not
     analyzed for foldback finding (default: 0.50).
 
+*   `--minimum-monotony-length=N`
+
+    Minumum read length (in base pairs) for monotony filtering.  Reads shorter
+    than this will not be checked for monotony and will always be analyzed to
+    determine whether they are foldbacks.  Monotony filtering is a performance
+    optimization and short reads are not problematic for performance even when
+    monotonous, and monotony is difficult to estimate for short reads, so this
+    option exists so we can err on the side of analyzing all short reads.
+
 
 ### Foldback Options
 

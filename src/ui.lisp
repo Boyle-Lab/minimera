@@ -177,6 +177,17 @@
     :initial-value 0.50
     :key #'parse-float:parse-float))
 
+(defparameter *o/monotony-min-length*
+  (adopt:make-option 'monotony-min-length
+    :help "Minimum read length (in base pairs) for monotony filtering (default: 1000)."
+    :terse "Minimum read length for monotony filtering"
+    :manual "Minumum read length (in base pairs) for monotony filtering.  Reads shorter than this will not be checked for monotony and will always be analyzed to determine whether they are foldbacks.  Monotony filtering is a performance optimization and short reads are not problematic for performance even when monotonous, and monotony is difficult to estimate for short reads, so this option exists so we can err on the side of analyzing all short reads."
+    :long "minimum-monotony-length"
+    :parameter "N"
+    :reduce #'adopt:last
+    :initial-value 1000
+    :key #'parse-integer))
+
 (defparameter *o/min-qscore*
   (adopt:make-option 'min-qscore
     :help "Minimum mean Q-score, reads with a mean Q-score less than this will be classified as failed and not analyzed for foldback finding (default: 9.0)."
@@ -300,7 +311,8 @@
             :options (list *o/min-qscore*
                            *o/simple-mean-qscore*
                            *o/dorado-mean-qscore*
-                           *o/monotony-threshold*))
+                           *o/monotony-threshold*
+                           *o/monotony-min-length*))
           (adopt:make-group 'foldback
             :title "Foldback Options"
             :help "For reads that have passed basic quality checks, Minimera will classify them as normal or foldback chimeric reads."
@@ -354,6 +366,7 @@
         *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
         *monotony-threshold* (gethash 'monotony-threshold options)
+        *monotony-min-length* (gethash 'monotony-min-length options)
         *minimum-qscore* (gethash 'min-qscore options)
         *dorado-mean-qscore* (gethash 'dorado-mean-qscore options)
         *low-quality-threshold* (gethash 'low-quality-threshold options)
@@ -389,6 +402,8 @@
               "Minimum foldback length (relative) (~A) must be in the range [0, 1]." *minimum-foldback-length-relative*)
             (assert (<= 0.0 *monotony-threshold* 1.0) ()
               "Monotony threshold (~A) must be in the range [0, 1]." *monotony-threshold*)
+            (assert (>= *monotony-min-length* 0) ()
+              "Minimum read length for monotony filtering (~A) must nonnegative." *monotony-min-length*)
             (assert (<= 0.0 *minimum-qscore* 60.0) ()
               "Minimum Q-score (~A) must be in the range [0, 60]." *minimum-qscore*)
             (run (first arguments)))
