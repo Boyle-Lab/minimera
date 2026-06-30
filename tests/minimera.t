@@ -45,6 +45,9 @@ Usage:
                           Monotony score above which reads will be classified as
                           failed and not analyzed for foldback finding (default:
                           0.50).
+    --minimum-monotony-length N
+                          Minimum read length (in base pairs) for monotony
+                          filtering (default: 1000).
   
   Foldback Options:
     For reads that have passed basic quality checks, Minimera will classify them
@@ -56,8 +59,8 @@ Usage:
                           minimizer sketches (default: 16).
     --foldback-position-epsilon N
                           How close (in base pairs) a cluster must be to the
-                          beginning of read 2 and end of read 1 to be considered
-                          as a foldback cluster (default: 80).
+                          beginning/end of the reads to be considered as a
+                          foldback cluster (default: 80).
     --intercept-epsilon N Epsilon (in y-intercept space) used to cluster colinear
                           points during the initial clustering step (default: 30).
     --gap-epsilon N       Maximum width (in y-intercept space) of an allowable gap
