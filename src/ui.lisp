@@ -65,6 +65,22 @@
     :reduce (constantly t)))
 
 
+(defparameter *o/rna*
+  (adopt:make-option 'rna
+    :help "Run on RNA input instead of DNA."
+    :terse "Input is RNA"
+    :long "rna"
+    :reduce (constantly t)))
+
+(defparameter *o/dna*
+  (adopt:make-option 'dna
+    :result-key 'rna
+    :help "Run on DNA input (the default)."
+    :terse "Input is DNA"
+    :long "dna"
+    :reduce (constantly nil)))
+
+
 (defparameter *o/threads*
   (adopt:make-option 'threads
     :help "Number of worker threads to spawn. Does not include the reader and writer threads (default: 1)."
@@ -305,6 +321,10 @@
           *o/threads*
           *o/progress*
           *o/no-progress*
+          (adopt:make-group 'input
+            :title "Input Options"
+            :options (list *o/rna*
+                           *o/dna*))
           (adopt:make-group 'filtering
             :title "Filtering Options"
             :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers."
@@ -357,6 +377,7 @@
       (setf
         *interactive* nil
         *worker-threads* (gethash 'threads options)
+        *rna* (gethash 'rna options)
         *k* (gethash 'k options)
         *w* (gethash 'w options)
         *foldback-position-epsilon* (gethash 'foldback-position-epsilon options)

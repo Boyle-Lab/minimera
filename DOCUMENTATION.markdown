@@ -67,6 +67,17 @@ forwards compatible.
     Do not report progress.
 
 
+### Input Options
+
+*   `--rna`
+
+    Run on RNA input instead of DNA.
+
+*   `--dna`
+
+    Run on DNA input (the default).
+
+
 ### Filtering Options
 
 Minimera will try to filter out low\-quality and/or uninformative reads before

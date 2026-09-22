@@ -4,6 +4,7 @@
 (in-package :minimera)
 
 ;;;; Configuration ------------------------------------------------------------
+(defparameter *rna* nil)
 (defparameter *k* 8)
 (defparameter *w* 16)
 
@@ -214,6 +215,7 @@
         (collect (make-hit (- l2 l1) l1 l2) :into result
                  :result-type '(simple-array hit (*))))
       (returning (sort result #'hit<)))))
+
 
 ;;;; Clustering ---------------------------------------------------------------
 (defun break-gaps (cluster)
@@ -864,12 +866,14 @@
           ;; X/Y axes, foldback position marks, and tic marks
           (do-range ((x mpxs mpxe))
             (draw x mpye #x66)
-            (draw x (base->y *foldback-position-epsilon*)         #xBB #xBB #xFF)
-            (draw x (base->y (- len *foldback-position-epsilon*)) #xBB #xBB #xFF))
+            (when (< (* 2 *foldback-position-epsilon*) len)
+              (draw x (base->y *foldback-position-epsilon*)         #xBB #xBB #xFF)
+              (draw x (base->y (- len *foldback-position-epsilon*)) #xBB #xBB #xFF)))
           (do-range ((y mpys mpye))
             (draw mpxs y #x66)
-            (draw (base->x *foldback-position-epsilon*)         y #xBB #xBB #xFF)
-            (draw (base->x (- len *foldback-position-epsilon*)) y #xBB #xBB #xFF))
+            (when (< (* 2 *foldback-position-epsilon*) len)
+              (draw (base->x *foldback-position-epsilon*)         y #xBB #xBB #xFF)
+              (draw (base->x (- len *foldback-position-epsilon*)) y #xBB #xBB #xFF)))
           (iterate (for tx :from (+ mpxs tic-width) :to mpxe :by tic-width) ; xticx
                    (loop :for ty :from mpye
                          :repeat tic-length
@@ -1054,8 +1058,19 @@
           :foldback-hits hits
           :foldback-clusters clusters)))))
 
+(defun convert-rna-to-dna (sequence)
+  (check-type sequence a8)
+  (substitute (char-code #\T) (char-code #\U) sequence))
+
+(defun prepare-sequence (sequence)
+  (if *rna*
+    (convert-rna-to-dna sequence)
+    sequence))
+
+
 (defun process-read (id sequence quality-scores)
-  (let ((result (process-read% id sequence quality-scores)))
+  (let* ((sequence (prepare-sequence sequence))
+         (result (process-read% id sequence quality-scores)))
     (when (if (foldbackp result)
             *plot-foldbacks*
             *plot-normal*)
@@ -1134,4 +1149,16 @@
                 :report-progress *report-progress*
                 :worker-threads *worker-threads*
                 :queue-size (* 10 *worker-threads*))))
+
+;; #; Run ------------------------------------------------------------------------
+;; (run "tests/data/example-rna.fastq")
+
+;; (setf *worker-threads* 1
+;;       *rna* t
+;;       *k* 6
+;;       *w* 10
+;;       *plot-foldbacks* t
+;;       *output-directory* "results/rna")
+
+;; (run "~/src/phd/prensner-rna-minimera/data/Hek293T_NEB_depletion.fastq")
 
