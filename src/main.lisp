@@ -466,15 +466,27 @@
   ;; Q = -10 * log10(P)
   (* -10.0d0 (log p 10.0d0)))
 
-(defun compute-mean-qscore (qs &aux (len (length qs)))
-  ;; Compute this in probability space.  Q scores are logarithmic so averaging
-  ;; them doesn't make much sense.
-  (if (zerop len)
-    0.0d0
-      (let ((truncate-read (and *dorado-mean-qscore* (> len 60))))
-        (float (p->q (/ (reduce #'+ qs :start (if truncate-read 60 0) :key #'q->p)
-                        (if truncate-read (- len 60) len)))
-               0.0d0))))
+
+(defun compute-mean-qscore (qs &key start end)
+  (if (and (null start) (null end))
+    (let ((truncate-read (and *dorado-mean-qscore* (> (length qs) 60))))
+      (compute-mean-qscore qs :start (if truncate-read 60 0)))
+    (let* ((start (or start 0))
+           (end (or end (length qs)))
+           (length (- end start)))
+      (if (zerop length)
+        0.0d0
+        ;; Compute this in probability space.  Q scores are logarithmic so averaging
+        ;; them doesn't make much sense.
+        (coerce (p->q (/ (reduce #'+ qs :start start :end end :key #'q->p) length))
+                'double-float)))))
+
+(defun compute-foldback-qscores (qs cluster)
+  "Return a cons of the prefix and suffix mean qscores for a foldback cluster."
+  (multiple-value-bind (foldback-start foldback-end) (cluster-bounds cluster)
+    (let* ((foldback-mid (compute-foldback-position cluster)))
+      (cons (compute-mean-qscore qs :start foldback-start :end foldback-mid)
+            (compute-mean-qscore qs :start foldback-mid   :end foldback-end)))))
 
 (defun merge-overlapping-lqrs (lqrs)
   (iterate
@@ -848,8 +860,13 @@
                                      (if foldback-point
                                        (format nil "foldback point = ~:D" foldback-point)
                                        "no foldback detected")))
-      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqr = ~D, lq bases = ~D, monotony = ~,2F (from ~D of ~D)"
+      (draw-string lg2x lg2y (format nil "mean Q = ~,1F~A, llqr = ~D, lq bases = ~D, monotony = ~,2F (~D of ~D)"
                                      (mean-qscore result)
+                                     (if foldback-point
+                                         (format nil " (~,1F | ~,1F)"
+                                                 (foldback-prefix-mean-qscore result)
+                                                 (foldback-suffix-mean-qscore result))
+                                         "")
                                      llqr
                                      (lq-total result)
                                      (monotony result)
@@ -988,6 +1005,8 @@
    monotony
    minimizer-count
    mean-qscore
+   (foldback-prefix-mean-qscore :initform nil)
+   (foldback-suffix-mean-qscore :initform nil)
    skip-reasons
    (foldback-point :initform nil)
    foldback-hits
@@ -1050,7 +1069,9 @@
              (result (alexandria:extremum results #'> :key #'cluster-lengths))
              (classification (if result :foldback :normal))
              (foldback-position (when result
-                                  (unsplice-position lqrs (compute-foldback-position result)))))
+                                  (unsplice-position lqrs (compute-foldback-position result))))
+             (foldback-qscores (when result
+                                 (compute-foldback-qscores quality-scores result))))
         (make-instance 'minimera-result
           :read-id id
           :read-length read-length
@@ -1059,6 +1080,8 @@
           :monotony monotony
           :minimizer-count (length m1)
           :mean-qscore mean-qscore
+          :foldback-prefix-mean-qscore (car foldback-qscores)
+          :foldback-suffix-mean-qscore (cdr foldback-qscores)
           :lqrs lqrs
           :llqr llqr-len
           :llqr-start llqr-start
@@ -1160,7 +1183,8 @@
                 :worker-threads *worker-threads*
                 :queue-size (* 10 *worker-threads*))))
 
-;; #; Run ------------------------------------------------------------------------
+
+;; #; Scratch -----------------------------------------------------------------
 ;; (run "tests/data/example-rna.fastq")
 
 ;; (setf *worker-threads* 1
