@@ -33,6 +33,8 @@
 (defparameter *report-progress* t)
 (defparameter *interactive* t)
 
+(defparameter *input-format* :fastq)
+
 (defparameter *debug-identity* nil)
 
 
@@ -1134,7 +1136,7 @@
                             (if (foldback-point result)
                               (princ-to-string (foldback-point result))
                               "")
-                            (princ-to-string (mean-qscore result))
+                            (format nil "~,4F" (mean-qscore result))
                             (princ-to-string (llqr result))
                             (princ-to-string (or (llqr-start result) ""))
                             (princ-to-string (or (llqr-end result) ""))
@@ -1148,7 +1150,8 @@
       (sb-ext:get-time-of-day)
     (+ (* 1000000 sec) microsec)))
 
-(defun work% (fastq-read)
+
+(defun work-fastq% (fastq-read)
   (let* ((start (gettime))
          (id (faster:parse-sequence-id (faster:id fastq-read)))
          (seq (faster:seq fastq-read))
@@ -1158,6 +1161,28 @@
          (processing-time (- end start)))
     (setf (processing-time result) processing-time)
     result))
+
+(defun work-bam% (alignment)
+  (let* ((start (gettime))
+         (id (faster/bam::alignment-read-name alignment))
+         (rc (faster/bam::revcompp alignment))
+         (seq (let ((seq (faster/bam::alignment-sequence/fastq alignment)))
+                (when rc (nreverse-complement-bytes seq))
+                seq))
+         (qs (let ((qs (faster/bam::alignment-phred alignment)))
+               (when rc (setf qs (nreverse qs)))
+               qs))
+         (result (process-read id seq qs))
+         (end (gettime))
+         (processing-time (- end start)))
+    (setf (processing-time result) processing-time)
+    result))
+
+(defun work% (input)
+  (ecase *input-format*
+    (:fastq (work-fastq% input))
+    (:bam (work-bam% input))))
+
 
 (defun bench (filename &key n &aux (i 0))
   (with-open-file (stream filename :element-type 'u8)
@@ -1177,6 +1202,7 @@
     (conserve:write-row *csv-headers* csv-stream)
     (faster:run filename
                 :work-function #'work%
+                :format *input-format*
                 :output-function (curry #'output% csv-stream)
                 :interactive *interactive*
                 :report-progress *report-progress*

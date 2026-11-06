@@ -280,6 +280,23 @@
     :terse-no "Don't report progress"
     :initial-value t))
 
+(defparameter *o/fastq*
+  (adopt:make-option 'fastq
+    :result-key 'input-format
+    :help "Inputs are FASTQ files (the default)."
+    :terse "FASTQ input"
+    :long "fastq"
+    :reduce (constantly :fastq)
+    :initial-value :fastq))
+
+(defparameter *o/bam*
+  (adopt:make-option 'bam
+    :result-key 'input-format
+    :help "Inputs are BAM files."
+    :terse "BAM input"
+    :long "bam"
+    :reduce (constantly :bam)))
+
 
 (defparameter *o/debug*
   (adopt:make-option 'debug
@@ -333,8 +350,10 @@
           *o/no-progress*
           (adopt:make-group 'input
             :title "Input Options"
-            :options (list *o/rna*
-                           *o/dna*))
+            :options (list *o/dna*
+                           *o/rna*
+                           *o/fastq*
+                           *o/bam*))
           (adopt:make-group 'filtering
             :title "Filtering Options"
             :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers."
@@ -389,6 +408,7 @@
         *interactive* nil
         *worker-threads* (gethash 'threads options)
         *rna* (gethash 'rna options)
+        *input-format* (gethash 'input-format options)
         *k* (gethash 'k options)
         *w* (gethash 'w options)
         *foldback-position-epsilon* (gethash 'foldback-position-epsilon options)

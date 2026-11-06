@@ -64,3 +64,6 @@ able to run `make` to:
 There's a (very small) [Cram](https://bitheap.org/cram/) test suite, mostly so
 I can to avoid breaking things inadvertently before a release.  Once you've got
 cram installed `make test` to run it.
+
+To myself in the future: to run the tests interactively, `cd tests` and `cram
+minimera.t -i`.
