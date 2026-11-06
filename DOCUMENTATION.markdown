@@ -98,6 +98,11 @@ generating minimizers.
     Compute mean Q\-score as a simple mean of Q\-score probabilities (the
     default).
 
+*   `--monotony-fraction=X`
+
+    Fraction of top minimizers to use when computing monotony score (default:
+    0.02).
+
 *   `--monotony-threshold=X`
 
     Monotony score above which reads will be classified as failed and not

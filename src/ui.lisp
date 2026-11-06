@@ -183,6 +183,16 @@
     :initial-value 0.05
     :key #'parse-float:parse-float))
 
+(defparameter *o/monotony-fraction*
+  (adopt:make-option 'monotony-fraction
+    :help "Fraction of top minimizers to use when computing monotony score (default: 0.02)."
+    :terse "Fraction of minimizers for monotonous reads"
+    :long "monotony-fraction"
+    :parameter "X"
+    :reduce #'adopt:last
+    :initial-value 0.02
+    :key #'parse-float:parse-float))
+
 (defparameter *o/monotony-threshold*
   (adopt:make-option 'monotony-threshold
     :help "Monotony score above which reads will be classified as failed and not analyzed for foldback finding (default: 0.50)."
@@ -331,6 +341,7 @@
             :options (list *o/min-qscore*
                            *o/simple-mean-qscore*
                            *o/dorado-mean-qscore*
+                           *o/monotony-fraction*
                            *o/monotony-threshold*
                            *o/monotony-min-length*))
           (adopt:make-group 'foldback
@@ -387,6 +398,7 @@
         *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)
         *monotony-threshold* (gethash 'monotony-threshold options)
+        *monotony-fraction* (gethash 'monotony-fraction options)
         *monotony-min-length* (gethash 'monotony-min-length options)
         *minimum-qscore* (gethash 'min-qscore options)
         *dorado-mean-qscore* (gethash 'dorado-mean-qscore options)

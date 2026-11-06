@@ -23,7 +23,7 @@
     (dolist (glyph glyphs)
       (destructuring-bind (char x y w &optional (h h)) glyph
         (let ((pixels (subarr data x y w h)))
-          ;; (when (position char "A_")
+          ;; (when (position char "!?'\"`/|\\")
           ;;   (terpri)
           ;;   (pr char)
           ;;   (dump-pixels pixels))
@@ -107,7 +107,29 @@
              '(#\)  15 88 2)
              '(#\<  75 88 3)
              '(#\>  87 88 3)
+             '(#\!  3 76 1)
+             '(#\?  15 76 5)
+             '(#\'  75 76 1)
+             '(#\"  87 76 3)
+             '(#\`  99 76 2)
+             '(#\/  111 76 3)
+             '(#\|  123 76 1)
+             '(#\\  147 76 3)
              ))
 
+;; When trying to find a new char:
+;;
+;; 1. Add it to the the array in load-m5x7 as (ch 0 row 157) where row is the
+;;    y addr of the row you want to inspect, e.g.:
+;;
+;;        `(#\/  0 ,(+ 8 (* 10 n)) 157)
+;;
+;; 2. Uncommand the dumping code in load-font.
+;; 3. Reload the font.
+;; 4. Narrow from there.
+;;
+;; First row starts at y=8, but there's also some weird padding with a line in
+;; the image, figure it out.  Each row is 9 tall to account for descenders, plus
+;; 3 padding.
 
 (defparameter *m5x7* (load-m5x7))

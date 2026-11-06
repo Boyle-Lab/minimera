@@ -31,6 +31,7 @@ minimera <(clean_fastq) \
     --plot-foldbacks \
     --plot-normal \
     --min-qscore 0 \
+    --monotony-threshold 0.9 \
     "$@"
 
 

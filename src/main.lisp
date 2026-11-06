@@ -17,6 +17,7 @@
 
 (defparameter *monotony-min-length* 1000)
 (defparameter *monotony-threshold* 0.50)
+(defparameter *monotony-fraction* 0.02)
 (defparameter *minimum-qscore* 9.0)
 (defparameter *dorado-mean-qscore* nil)
 
@@ -154,6 +155,10 @@
 
 
 ;;;; Monotony -----------------------------------------------------------------
+(defun monotony-minimizer-count (minimizers)
+  "Return the number of minimizers to use for the monotony estimation."
+  (max (round (* (length minimizers) *monotony-fraction*)) 2))
+
 (defun estimate-monotony (minimizers)
   (_ minimizers
     (proportions _ :key #'hash)
@@ -162,7 +167,7 @@
     (coerce _ 'vector)
     (sort _ #'>)
     ;; Sum the proportions of the top 0.1% of minimizers.
-    (take (max (truncate (length minimizers) 1000) 2) _)
+    (take (monotony-minimizer-count minimizers) _)
     summation))
 
 
@@ -843,11 +848,13 @@
                                      (if foldback-point
                                        (format nil "foldback point = ~:D" foldback-point)
                                        "no foldback detected")))
-      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqr = ~D, lq bases = ~D, monotony = ~,2F"
+      (draw-string lg2x lg2y (format nil "mean Q = ~,1F, llqr = ~D, lq bases = ~D, monotony = ~,2F (from ~D of ~D)"
                                      (mean-qscore result)
                                      llqr
                                      (lq-total result)
-                                     (monotony result)))
+                                     (monotony result)
+                                     (monotony-minimizer-count minimizers)
+                                     (minimizer-count result)))
       (if (not has-minimizers)
         (let ((y msy))
           (draw-string msx y "Minimizer computation skipped due to:" :centered t)
@@ -979,6 +986,7 @@
    read-minimizers
    classification
    monotony
+   minimizer-count
    mean-qscore
    skip-reasons
    (foldback-point :initform nil)
@@ -1022,6 +1030,7 @@
         :read-minimizers m1
         :classification :failed
         :monotony monotony
+        :minimizer-count (length m1)
         :mean-qscore mean-qscore
         :skip-reasons skip-reasons
         :lqrs lqrs
@@ -1048,6 +1057,7 @@
           :read-minimizers m1
           :classification classification
           :monotony monotony
+          :minimizer-count (length m1)
           :mean-qscore mean-qscore
           :lqrs lqrs
           :llqr llqr-len
@@ -1160,5 +1170,10 @@
 ;;       *plot-foldbacks* t
 ;;       *output-directory* "results/rna")
 
-;; (run "~/src/phd/prensner-rna-minimera/data/Hek293T_NEB_depletion.fastq")
+;; (setf *output-directory* "results/tmp"
+;;       *worker-threads* 1
+;;       *plot-foldbacks* t
+;;       *monotony-threshold* 0.8
+;;       *plot-normal* t)
 
+;; (run "~/downloads/to_steve_smht007_res_and_tier.fastq")
