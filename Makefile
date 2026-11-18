@@ -1,4 +1,6 @@
-.PHONY: all release binary clean contrib test
+.PHONY: all local release binary clean contrib test
+
+local: build/minimera build/minimera.1
 
 binary: build/minimera
 
@@ -45,7 +47,7 @@ build/fastq-stats: contrib/fastq-stats.lisp Makefile
 
 # Test ------------------------------------------------------------------------
 test:
-	cd tests && cram minimera.t
+	cd tests && cram *.t
 
 # Clean -----------------------------------------------------------------------
 clean:

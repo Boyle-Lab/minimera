@@ -11,6 +11,7 @@
 (defparameter *foldback-position-epsilon* 80)
 (defparameter *intercept-epsilon* 30)
 (defparameter *gap-epsilon* 300)
+(defparameter *cluster-lis-fraction* 0.10)
 (defparameter *minimum-cluster-length* 40)
 (defparameter *minimum-foldback-length-absolute* 50)
 (defparameter *minimum-foldback-length-relative* 0.05)
@@ -250,14 +251,15 @@
 
 (defun longest-increasing-subsequence (cluster)
   "Return the longest increasing subsequence of hits in `cluster`."
-  (declare (optimize (speed 3) (safety 1) (debug 1))
-           (type (simple-array hit (*)) cluster))
+  (declare (optimize (speed 3) (safety 1) (debug 1) (space 0)))
+  (check-type cluster (simple-array hit (*)))
   ;; Used https://github.com/privet-kitty/cl-competitive/blob/master/module/lis.lisp
   ;; as a starting point, which is public domain and implements the LIS algorithm
   ;; described at https://en.wikipedia.org/wiki/Longest_increasing_subsequence#Efficient_algorithms
   ;; for speed, because profiling showed that a naive implementation using
   ;; Patience Sort from Rosetta code was the performance bottleneck.
-  (let* ((n (length cluster))
+  (let* ((cluster (sort cluster #'< :key #'hit-l1))
+         (n (length cluster))
          (dp (make-array (+ 1 n)
                :element-type 'fixnum
                :initial-element most-positive-fixnum))
@@ -294,13 +296,21 @@
 
 (defun filter-clusters (clusters min-length)
   "Return a list of clusters, with gaps broken and small clusters removed."
-  (declare (optimize (speed 3) (safety 1) (debug 1) (space 0)))
+  ;; Deduplicate minimizer hits by finding longest increasing subsequence
   (let* ((deduped (mapcar (lambda (cluster)
-                            (check-type cluster (simple-array hit (*)))
-                            (longest-increasing-subsequence
-                              (sort cluster #'< :key #'hit-l1)))
+                            ; cluster -> (lis . fraction)
+                            (let* ((lis (longest-increasing-subsequence cluster))
+                                   (fraction (/ (length lis) (length cluster))))
+                              (cons lis fraction)))
                           clusters))
-         (degapped (alexandria:mappend #'break-gaps deduped))
+         ;; Remove clusters coming from highly-repetitive blocks
+         (deblocked (mapcar #'car (remove-if (lambda (fraction)
+                                               (< fraction *cluster-lis-fraction*))
+                                             deduped
+                                             :key #'cdr)))
+         ;; Break clusters with long gaps into separate clusters
+         (degapped (alexandria:mappend #'break-gaps deblocked))
+         ;; Remove clusters that have become too small
          (results (remove-if (lambda (cluster)
                                (< (length cluster) min-length))
                              degapped)))

@@ -163,6 +163,17 @@
     :initial-value 40
     :key #'parse-integer))
 
+(defparameter *o/cluster-lis-fraction*
+  (adopt:make-option 'cluster-lis-fraction
+    :help "Fraction of points that must be included in the LIS of a cluster for it to be valid (default: 0.10)."
+    :manual "Fraction of points that must be included in the longest increasing subsequence (LIS) of a cluster for that cluster to be considered valid (default: 0.10).  Clusters whose LIS contains fewer than this fraction of the total cluster points will be removed.  This is used to deal with regions of highly repetitive minimizer hits (e.g. AT tandem repeats) which end up becoming a single dense square of hits in the alignment."
+    :terse "Cluster LIS fraction"
+    :long "cluster-lis-fraction"
+    :parameter "X"
+    :reduce #'adopt:last
+    :initial-value 0.10
+    :key #'parse-float:parse-float))
+
 (defparameter *o/minimum-foldback-length-absolute*
   (adopt:make-option 'minimum-foldback-length-absolute
     :help "Minimum length (in base pairs) of a foldback region.  Regions shorter than this will be excluded (default: 50)."
@@ -356,22 +367,26 @@
                            *o/bam*))
           (adopt:make-group 'filtering
             :title "Filtering Options"
-            :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers."
+            :help "Minimera will try to filter out low-quality and/or uninformative reads before generating minimizers and performing alignment."
             :options (list *o/min-qscore*
                            *o/simple-mean-qscore*
                            *o/dorado-mean-qscore*
                            *o/monotony-fraction*
                            *o/monotony-threshold*
                            *o/monotony-min-length*))
-          (adopt:make-group 'foldback
-            :title "Foldback Options"
-            :help "For reads that have passed basic quality checks, Minimera will classify them as normal or foldback chimeric reads."
+          (adopt:make-group 'clustering
+            :title "Clustering Options"
+            :help "For reads that have passed basic quality checks, Minimera will generate alignments by clustering minizer matches between the read and its own reverse complement."
             :options (list *o/k*
                            *o/w*
-                           *o/foldback-position-epsilon*
                            *o/intercept-epsilon*
                            *o/gap-epsilon*
-                           *o/minimum-cluster-length*
+                           *o/cluster-lis-fraction*
+                           *o/minimum-cluster-length*))
+          (adopt:make-group 'foldback
+            :title "Foldback Options"
+            :help "Minimera will use the alignment clusters to classify reads as normal or foldback chimeric reads."
+            :options (list *o/foldback-position-epsilon*
                            *o/minimum-foldback-length-absolute*
                            *o/minimum-foldback-length-relative*))
           (adopt:make-group 'llqr
@@ -414,6 +429,7 @@
         *foldback-position-epsilon* (gethash 'foldback-position-epsilon options)
         *intercept-epsilon* (gethash 'intercept-epsilon options)
         *gap-epsilon* (gethash 'gap-epsilon options)
+        *cluster-lis-fraction* (gethash 'cluster-lis-fraction options)
         *minimum-cluster-length* (gethash 'minimum-cluster-length options)
         *minimum-foldback-length-absolute* (gethash 'minimum-foldback-length-absolute options)
         *minimum-foldback-length-relative* (gethash 'minimum-foldback-length-relative options)

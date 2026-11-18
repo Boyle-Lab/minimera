@@ -69,19 +69,27 @@ forwards compatible.
 
 ### Input Options
 
+*   `--dna`
+
+    Run on DNA input (the default).
+
 *   `--rna`
 
     Run on RNA input instead of DNA.
 
-*   `--dna`
+*   `--fastq`
 
-    Run on DNA input (the default).
+    Inputs are FASTQ files (the default).
+
+*   `--bam`
+
+    Inputs are BAM files.
 
 
 ### Filtering Options
 
 Minimera will try to filter out low\-quality and/or uninformative reads before
-generating minimizers.
+generating minimizers and performing alignment.
 
 *   `--min-qscore=Q`
 
@@ -118,10 +126,11 @@ generating minimizers.
     option exists so we can err on the side of analyzing all short reads.
 
 
-### Foldback Options
+### Clustering Options
 
-For reads that have passed basic quality checks, Minimera will classify them as
-normal or foldback chimeric reads.
+For reads that have passed basic quality checks, Minimera will generate
+alignments by clustering minizer matches between the read and its own reverse
+complement.
 
 *   `-k N`, `--kmer-size=N`
 
@@ -131,11 +140,6 @@ normal or foldback chimeric reads.
 
     Total size of windows (in base pairs) to use for minimizer sketches
     (default: 16).
-
-*   `--foldback-position-epsilon=N`
-
-    How close (in base pairs) a cluster must be to the beginning/end of the
-    reads to be considered as a foldback cluster (default: 80).
 
 *   `--intercept-epsilon=N`
 
@@ -147,10 +151,30 @@ normal or foldback chimeric reads.
     Maximum width (in y\-intercept space) of an allowable gap in a cluster.  Gaps
     wider than this will result in splitting the cluster (default: 300).
 
+*   `--cluster-lis-fraction=X`
+
+    Fraction of points that must be included in the longest increasing
+    subsequence (LIS) of a cluster for that cluster to be considered valid
+    (default: 0.10).  Clusters whose LIS contains fewer than this fraction of
+    the total cluster points will be removed.  This is used to deal with regions
+    of highly repetitive minimizer hits (e.g. AT tandem repeats) which end up
+    becoming a single dense square of hits in the alignment.
+
 *   `--minimum-cluster-length=N`
 
     Minimum number of allowable points in a cluster.  Clusters with fewer than
     this many hits will be removed (default: 40).
+
+
+### Foldback Options
+
+Minimera will use the alignment clusters to classify reads as normal or foldback
+chimeric reads.
+
+*   `--foldback-position-epsilon=N`
+
+    How close (in base pairs) a cluster must be to the beginning/end of the
+    reads to be considered as a foldback cluster (default: 80).
 
 *   `--minimum-foldback-length-absolute=N`
 
