@@ -160,7 +160,9 @@
 ;;;; Monotony -----------------------------------------------------------------
 (defun monotony-minimizer-count (minimizers)
   "Return the number of minimizers to use for the monotony estimation."
-  (max (round (* (length minimizers) *monotony-fraction*)) 2))
+  (max (min (round (* (length minimizers) *monotony-fraction*))
+            100)
+       2))
 
 (defun estimate-monotony (minimizers)
   (_ minimizers
